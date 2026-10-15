@@ -1147,21 +1147,18 @@ private fun GalleryApp() {
                             if (baseName.isBlank()) {
                                 statusMessage = "Enter a valid base name."
                             } else {
-                                var renamed = 0
-                                targets.forEachIndexed { index, target ->
+                                val actions = targets.mapIndexed { index, target ->
                                     val dot = target.name.lastIndexOf('.')
                                     val extension = if (dot > 0 && dot < target.name.lastIndex) target.name.substring(dot) else ""
-                                    val newName = "$baseName (${index + 1})$extension"
-                                    try {
-                                        val values = android.content.ContentValues().apply {
-                                            put(MediaStore.MediaColumns.DISPLAY_NAME, newName)
-                                        }
-                                        if (context.contentResolver.update(target.uri, values, null, null) > 0) renamed++
-                                    } catch (_: Exception) { }
+                                    val enteredBase = baseName.trim().trimEnd(' ', '.')
+                                    val base = if (extension.isNotBlank() && enteredBase.endsWith(extension, ignoreCase = true)) {
+                                        enteredBase.dropLast(extension.length).trimEnd('.')
+                                    } else {
+                                        enteredBase
+                                    }
+                                    target to (base + " (" + (index + 1) + ")" + extension)
                                 }
-                                statusMessage = if (renamed == targets.size) "Renamed all $renamed files." else "Renamed $renamed of ${targets.size} files; some could not be renamed."
-                                selected = emptySet()
-                                refresh()
+                                renameMediaItems(actions)
                             }
                             renameMultipleItems = emptyList()
                         }) { Text("Rename") }
@@ -1171,18 +1168,13 @@ private fun GalleryApp() {
             } else {
                 renameItem?.let { item ->
                     AlertDialog(onDismissRequest = { renameItem = null }, title = { Text("Rename") }, text = {
-                        OutlinedTextField(value = renameText, onValueChange = { renameText = it }, singleLine = true, label = { Text("File name") })
+                        OutlinedTextField(value = renameText, onValueChange = { renameText = it }, singleLine = true, label = { Text("File name (extension kept)") })
                     }, confirmButton = { TextButton(onClick = {
-                        val proposedName = renameText.trim()
+                        val proposedName = finalDisplayName(item.name, renameText)
                         if (proposedName.isBlank()) {
                             statusMessage = "Enter a valid file name."
                         } else {
-                            val values = android.content.ContentValues().apply { put(MediaStore.MediaColumns.DISPLAY_NAME, proposedName) }
-                            try {
-                                val changed = context.contentResolver.update(item.uri, values, null, null)
-                                statusMessage = if (changed > 0) "Renamed successfully" else "Rename not supported for this file"
-                                refresh()
-                            } catch (_: Exception) { statusMessage = "Rename was blocked by Android permissions" }
+                            renameMediaItems(listOf(item to proposedName))
                         }
                         renameItem = null
                     }) { Text("Save") } }, dismissButton = { TextButton(onClick = { renameItem = null }) { Text("Cancel") } })
