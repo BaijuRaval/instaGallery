@@ -442,6 +442,77 @@ private fun GalleryApp() {
             }
         } catch (_: Exception) { statusMessage = "Android could not delete these files. Try from the device's Gallery app." }
     }
+    fun finalDisplayName(originalName: String, enteredName: String): String {
+        val clean = enteredName.trim().trim('/').replace("/", "_").replace("\\", "_")
+        if (clean.isBlank()) return ""
+        val dot = originalName.lastIndexOf('.')
+        val extension = if (dot > 0 && dot < originalName.lastIndex) originalName.substring(dot) else ""
+        if (extension.isBlank() || clean.endsWith(extension, ignoreCase = true)) return clean
+        val typedDot = clean.lastIndexOf('.')
+        val base = if (typedDot > 0) clean.substring(0, typedDot) else clean
+        return base + extension
+    }
+
+    fun renameMediaItems(actions: List<Pair<GalleryMedia, String>>) {
+        if (actions.isEmpty()) return
+        if (actions.any { it.second.isBlank() }) {
+            statusMessage = "Enter a valid file name."
+            return
+        }
+        var renamed = 0
+        val blocked = mutableListOf<Pair<GalleryMedia, String>>()
+        var recoverableAction: android.content.IntentSender? = null
+        var failedWithoutPermission = 0
+        actions.forEach { (item, newName) ->
+            try {
+                val title = newName.substringBeforeLast('.', newName)
+                val values = android.content.ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, newName)
+                    put(MediaStore.MediaColumns.TITLE, title)
+                }
+                if (context.contentResolver.update(item.uri, values, null, null) > 0) renamed++ else blocked.add(item to newName)
+            } catch (e: android.app.RecoverableSecurityException) {
+                blocked.add(item to newName)
+                if (recoverableAction == null) recoverableAction = e.userAction.actionIntent.intentSender
+            } catch (_: SecurityException) {
+                blocked.add(item to newName)
+            } catch (_: Exception) {
+                failedWithoutPermission++
+            }
+        }
+        if (blocked.isNotEmpty()) {
+            try {
+                val intentSender = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    MediaStore.createWriteRequest(context.contentResolver, blocked.map { it.first.uri }).intentSender
+                } else {
+                    recoverableAction
+                }
+                if (intentSender != null) {
+                    pendingRenameActions = blocked
+                    pendingRenameAlreadyDone = renamed
+                    pendingRenameTotalCount = actions.size
+                    renamePermissionLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
+                    selected = emptySet()
+                    return
+                }
+            } catch (_: Exception) { }
+            statusMessage = if (renamed > 0) {
+                "Renamed " + renamed + " of " + actions.size + " file(s). Android blocked the remaining rename operation(s)."
+            } else {
+                "Android blocked the rename. Allow instaGallery to modify the selected media, then try again."
+            }
+            refresh()
+            return
+        }
+        statusMessage = if (renamed == actions.size && failedWithoutPermission == 0) {
+            if (actions.size == 1) "Renamed successfully." else "Renamed all " + renamed + " file(s) successfully."
+        } else {
+            "Renamed " + renamed + " of " + actions.size + " file(s). Some files could not be renamed."
+        }
+        selected = emptySet()
+        refresh()
+    }
+
     fun shareMedia(items: List<GalleryMedia>) {
         if (items.isEmpty()) return
         val shareType = when {
