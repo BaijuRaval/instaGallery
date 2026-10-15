@@ -646,24 +646,36 @@ private fun GalleryApp() {
                         }
                     }
                 }
-                when {
-                    !hasPermission -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                AnimatedContent(
+                    targetState = tab to selectedAlbum,
+                    transitionSpec = { fadeIn(tween(200)) togetherWith fadeOut(tween(140)) },
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    label = "galleryContentTransition"
+                ) { galleryTarget ->
+                    val gridTab = galleryTarget.first
+                    val gridAlbum = galleryTarget.second
+                    val animatedVisible = remember(media, hiddenFolders, gridAlbum) {
+                        (if (gridAlbum == "All media") media else media.filter { it.album == gridAlbum })
+                            .filter { it.album !in hiddenFolders }
+                    }
+                    when {
+                    !hasPermission -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
                             Text("Your photos and videos stay on this device.", color = Color.White)
                             Spacer(Modifier.height(12.dp))
                             Button(onClick = ::requestPermissions) { Text("Allow gallery access") }
                         }
                     }
-                    visible.isEmpty() && !(tab == "Folders" && selectedAlbum == "All media") -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { Text("No photos or videos found", color = Color.LightGray) }
-                    tab == "Folders" && selectedAlbum == "All media" -> {
+                    animatedVisible.isEmpty() && !(gridTab == "Folders" && gridAlbum == "All media") -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No photos or videos found", color = Color.LightGray) }
+                    gridTab == "Folders" && gridAlbum == "All media" -> {
                         val folders = media.filter { it.album !in hiddenFolders }.groupBy { it.album }.toSortedMap()
                         if (folders.isEmpty()) {
-                            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { Text("No folders found", color = Color.LightGray) }
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No folders found", color = Color.LightGray) }
                         } else {
                             PullToRefreshBox(
                                 isRefreshing = isRefreshing,
                                 onRefresh = { refresh() },
-                                modifier = Modifier.weight(1f).fillMaxWidth()
+                                modifier = Modifier.fillMaxSize()
                             ) {
                             LazyVerticalGrid(state = folderGridState, columns = GridCells.Fixed(folderGridColumns), modifier = Modifier.fillMaxSize().animateContentSize().pointerInput(Unit) {
                                 awaitEachGesture {
@@ -729,7 +741,7 @@ private fun GalleryApp() {
                         PullToRefreshBox(
                             isRefreshing = isRefreshing,
                             onRefresh = { refresh() },
-                            modifier = Modifier.weight(1f).fillMaxWidth()
+                            modifier = Modifier.fillMaxSize()
                         ) {
                         LazyVerticalGrid(
                             state = gridState,
@@ -761,7 +773,7 @@ private fun GalleryApp() {
                                         }
                                     }
                                 }
-                            }.pointerInput(visible, gridState) {
+                            }.pointerInput(animatedVisible, gridState) {
                                 awaitEachGesture {
                                     val down = awaitFirstDown(requireUnconsumed = false)
                                     var currentPosition = down.position
@@ -798,7 +810,7 @@ private fun GalleryApp() {
                                                 currentPosition.x >= itemInfo.offset.x && currentPosition.x < itemInfo.offset.x + itemInfo.size.width &&
                                                 currentPosition.y >= itemInfo.offset.y && currentPosition.y < itemInfo.offset.y + itemInfo.size.height
                                             }
-                                            val item = info?.let { visible.getOrNull(it.index) }
+                                            val item = info?.let { animatedVisible.getOrNull(it.index) }
                                             if (item != null) {
                                                 val current = latestSelection.value
                                                 if (current.isNotEmpty()) {
@@ -816,7 +828,7 @@ private fun GalleryApp() {
                                                 position.x >= itemInfo.offset.x && position.x < itemInfo.offset.x + itemInfo.size.width &&
                                                 position.y >= itemInfo.offset.y && position.y < itemInfo.offset.y + itemInfo.size.height
                                             }
-                                            val item = info?.let { visible.getOrNull(it.index) }
+                                            val item = info?.let { animatedVisible.getOrNull(it.index) }
                                             if (item != null && item.uri != lastSelectedUri) {
                                                 dragSelection.add(item.uri)
                                                 selected = dragSelection.toSet()
@@ -844,7 +856,7 @@ private fun GalleryApp() {
                             horizontalArrangement = Arrangement.spacedBy(2.dp),
                             verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
-                            items(visible, key = { it.uri.toString() }) { item ->
+                            items(animatedVisible, key = { it.uri.toString() }) { item ->
                                 Box(Modifier.animateItemPlacement().animateContentSize()) {
                                     MediaThumbnail(
                                         item, item.uri in selected, thumbnailLoader, thumbnailRevision,
@@ -855,9 +867,10 @@ private fun GalleryApp() {
                         }
                         }
                     }
+                    }
                 }
                 if (selected.isNotEmpty()) {
-                    Row(Modifier.fillMaxWidth().navigationBarsPadding().background(Color(0xFF171717)).padding(horizontal = 2.dp, vertical = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth().navigationBarsPadding().background(Color(0xFF171717)).padding(horizontal = 2.dp, vertical = 4.dp).animateContentSize(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
                         BottomAction("Details", Icons.Default.Info, Modifier.weight(1f)) { media.firstOrNull { it.uri in selected }?.let { infoItem = it } }
                         BottomAction("Rename", Icons.Default.Edit, Modifier.weight(1f)) {
                             val targets = media.filter { it.uri in selected }
@@ -887,7 +900,7 @@ private fun GalleryApp() {
                         BottomAction("Delete", Icons.Default.Delete, Modifier.weight(1f), tint = Color(0xFFFF6680)) { folderRemoveTarget = folderName }
                     }
                 } else {
-                    Row(Modifier.fillMaxWidth().navigationBarsPadding().background(Color(0xFF171717)).padding(vertical = 5.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    Row(Modifier.fillMaxWidth().navigationBarsPadding().background(Color(0xFF171717)).padding(vertical = 5.dp).animateContentSize(), horizontalArrangement = Arrangement.SpaceEvenly) {
                         NavigationBarItem(selected = tab == "Folders", onClick = { tab = "Folders"; selectedAlbum = "All media"; selectedFolder = null; selected = emptySet() }, icon = { Icon(Icons.Default.Folder, null) }, label = { Text("Folders") })
                         NavigationBarItem(selected = tab == "Reel", onClick = { tab = "Reel"; selectedAlbum = "All media"; selectedFolder = null; selected = emptySet() }, icon = { Icon(Icons.Default.PlayArrow, null) }, label = { Text("Reel") })
                     }
