@@ -18,6 +18,7 @@ import androidx.activity.result.IntentSenderRequest
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -62,6 +63,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import coil.request.videoFrameMillis
 import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
@@ -370,8 +372,8 @@ private fun VideoPage(item: GalleryMedia, active: Boolean, playing: Boolean, onE
         onDispose { player.removeListener(listener) }
     }
     val exoPlayer = player
-    Box(Modifier.fillMaxSize().pointerInput(item.uri, active) { androidx.compose.foundation.gestures.detectTapGestures(onTap = { if (active) onTogglePlay() }) }, contentAlignment = Alignment.Center) {
-        AndroidView(factory = { ctx -> PlayerView(ctx).apply { useController = false; player = exoPlayer; setShutterBackgroundColor(android.graphics.Color.BLACK) } },
+    Box(Modifier.fillMaxSize().pointerInput(item.uri, active) { detectTapGestures(onTap = { if (active) onTogglePlay() }) }, contentAlignment = Alignment.Center) {
+        AndroidView(factory = { ctx -> PlayerView(ctx).apply { useController = false; this.player = exoPlayer; setShutterBackgroundColor(android.graphics.Color.BLACK) } },
             update = { it.player = exoPlayer }, modifier = Modifier.fillMaxSize())
     }
 }
