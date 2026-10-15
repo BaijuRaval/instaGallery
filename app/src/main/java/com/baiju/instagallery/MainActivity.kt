@@ -20,6 +20,9 @@ import android.media.MediaScannerConnection
 import java.io.File
 import java.io.FileOutputStream
 import androidx.activity.ComponentActivity
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -1346,13 +1349,19 @@ private fun ReelsViewer(
     val context = LocalContext.current
     val pagerState = rememberPagerState(initialPage = startIndex, pageCount = { items.size })
     var playing by remember { mutableStateOf(true) }
+    var pagerScrollEnabled by remember { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
+
+    LaunchedEffect(pagerState.currentPage) {
+        pagerScrollEnabled = true
+    }
 
     LaunchedEffect(pagerState.currentPage, items) {
         items.getOrNull(pagerState.currentPage)?.let { onPageViewed(it.uri) }
     }
 
-    LaunchedEffect(pagerState.currentPage, autoPlayNext) {
+    LaunchedEffect(pagerState.currentPage, autoPlayNext, pagerScrollEnabled) {
+        if (!pagerScrollEnabled) return@LaunchedEffect
         val item = items.getOrNull(pagerState.currentPage) ?: return@LaunchedEffect
         if (!item.isVideo && autoPlayNext) {
             val page = pagerState.currentPage
@@ -1369,6 +1378,7 @@ private fun ReelsViewer(
         VerticalPager(
             state = pagerState,
             modifier = Modifier.fillMaxSize(),
+            userScrollEnabled = pagerScrollEnabled,
             beyondViewportPageCount = 1
         ) { page ->
             val item = items[page]
@@ -1387,14 +1397,15 @@ private fun ReelsViewer(
                             }
                         }
                     },
-                    onTogglePlay = { playing = !playing }
+                    onTogglePlay = { playing = !playing },
+                    onPagerScrollEnabledChanged = { pagerScrollEnabled = it }
                 )
             } else {
                 var zoom by remember(item.uri) { mutableFloatStateOf(1f) }
                 var pan by remember(item.uri) { mutableStateOf(Offset.Zero) }
-                var rotation by remember(item.uri) { mutableFloatStateOf(0f) }
+                val rotation = remember(item.uri) { Animatable(0f) }
                 var viewportSize by remember(item.uri) { mutableStateOf(IntSize.Zero) }
-                val rotationFit = calculateRotationFitScale(viewportSize.width, viewportSize.height, rotation)
+                val rotationFit = calculateRotationFitScale(viewportSize.width, viewportSize.height, rotation.value)
                 AsyncImage(
                     model = ImageRequest.Builder(context).data(item.uri).crossfade(false).build(),
                     imageLoader = imageLoader,
@@ -1404,11 +1415,23 @@ private fun ReelsViewer(
                         .pointerInput(item.uri) {
                             awaitEachGesture {
                                 awaitFirstDown(requireUnconsumed = false)
+                                if (zoom > 1.001f) onPagerScrollEnabledChanged(false)
+                                var usedMultiTouch = false
                                 while (true) {
                                     val event = awaitPointerEvent(PointerEventPass.Initial)
                                     val pointers = event.changes.filter { it.pressed }
-                                    if (pointers.isEmpty()) break
+                                    if (pointers.isEmpty()) {
+                                        if (usedMultiTouch) {
+                                            rotation.animateTo(
+                                                snapRotationToRightAngle(rotation.value),
+                                                animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
+                                            )
+                                        }
+                                        break
+                                    }
                                     if (pointers.size >= 2) {
+                                        usedMultiTouch = true
+                                        onPagerScrollEnabledChanged(false)
                                         val first = pointers[0]
                                         val second = pointers[1]
                                         val previousDistance = (first.previousPosition - second.previousPosition).getDistance()
@@ -1418,10 +1441,10 @@ private fun ReelsViewer(
                                             val newZoom = (oldZoom * (currentDistance / previousDistance)).coerceIn(1f, 5f)
                                             val oldCenter = (first.previousPosition + second.previousPosition) / 2f
                                             val newCenter = (first.position + second.position) / 2f
-                                            rotation = (rotation + calculateRotationDelta(
+                                            rotation.snapTo((rotation.value + calculateRotationDelta(
                                                 first.previousPosition, second.previousPosition,
                                                 first.position, second.position
-                                            )) % 360f
+                                            )) % 360f)
                                             zoom = newZoom
                                             pan = calculatePinchPan(
                                                 currentPan = pan,
@@ -1441,6 +1464,7 @@ private fun ReelsViewer(
                                         }
                                     }
                                 }
+                                onPagerScrollEnabledChanged(zoom <= 1.001f)
                             }
                         }
                         .graphicsLayer(
@@ -1448,7 +1472,7 @@ private fun ReelsViewer(
                             scaleY = zoom * rotationFit,
                             translationX = pan.x,
                             translationY = pan.y,
-                            rotationZ = rotation,
+                            rotationZ = rotation.value,
                             transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
                         ),
                     contentScale = ContentScale.Fit
@@ -1467,7 +1491,8 @@ private fun VideoPage(
     autoPlayNext: Boolean,
     rememberLastPlayed: Boolean,
     onEnded: () -> Unit,
-    onTogglePlay: () -> Unit
+    onTogglePlay: () -> Unit,
+    onPagerScrollEnabledChanged: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -1490,9 +1515,9 @@ private fun VideoPage(
     val exoPlayer = player
     var zoom by remember(item.uri) { mutableFloatStateOf(1f) }
     var pan by remember(item.uri) { mutableStateOf(Offset.Zero) }
-    var rotation by remember(item.uri) { mutableFloatStateOf(0f) }
+    val rotation = remember(item.uri) { Animatable(0f) }
     var viewportSize by remember(item.uri) { mutableStateOf(IntSize.Zero) }
-    val rotationFit = calculateRotationFitScale(viewportSize.width, viewportSize.height, rotation)
+    val rotationFit = calculateRotationFitScale(viewportSize.width, viewportSize.height, rotation.value)
     var seekBarVisible by remember(item.uri) { mutableStateOf(false) }
     var fastForwarding by remember(item.uri) { mutableStateOf(false) }
     var currentPositionMs by remember(item.uri) { mutableLongStateOf(initialPositionMs) }
@@ -1556,6 +1581,7 @@ private fun VideoPage(
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     if (!active) return@awaitEachGesture
+                    if (zoom > 1.001f) onPagerScrollEnabledChanged(false)
 
                     val downPosition = down.position
                     var didMove = false
@@ -1581,12 +1607,19 @@ private fun VideoPage(
 
                         val pointers = event.changes.filter { it.pressed }
                         if (pointers.isEmpty()) {
+                            if (multiTouch) {
+                                rotation.animateTo(
+                                    snapRotationToRightAngle(rotation.value),
+                                    animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
+                                )
+                            }
                             finished = true
                             continue
                         }
 
                         if (pointers.size >= 2) {
                             multiTouch = true
+                            onPagerScrollEnabledChanged(false)
                             if (longPressTriggered) {
                                 player.setPlaybackSpeed(1f)
                                 fastForwarding = false
@@ -1600,10 +1633,10 @@ private fun VideoPage(
                                 val newZoom = (oldZoom * (currentDistance / previousDistance)).coerceIn(1f, 5f)
                                 val oldCenter = (first.previousPosition + second.previousPosition) / 2f
                                 val newCenter = (first.position + second.position) / 2f
-                                rotation = (rotation + calculateRotationDelta(
+                                rotation.snapTo((rotation.value + calculateRotationDelta(
                                     first.previousPosition, second.previousPosition,
                                     first.position, second.position
-                                )) % 360f
+                                )) % 360f)
                                 zoom = newZoom
                                 pan = calculatePinchPan(
                                     currentPan = pan,
@@ -1664,6 +1697,7 @@ private fun VideoPage(
                         fastForwarding = false
                     }
                     seekBarVisible = false
+                    onPagerScrollEnabledChanged(zoom <= 1.001f)
                     if (!didMove && !multiTouch && !longPressTriggered) onTogglePlay()
                 }
             },
@@ -1686,7 +1720,7 @@ private fun VideoPage(
                 scaleY = zoom * rotationFit,
                 translationX = pan.x,
                 translationY = pan.y,
-                rotationZ = rotation,
+                rotationZ = rotation.value,
                 transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
             )
         )
@@ -1735,6 +1769,12 @@ private fun VideoPage(
             }
         }
     }
+}
+
+private fun snapRotationToRightAngle(angle: Float): Float {
+    val normalized = ((angle % 360f) + 360f) % 360f
+    // Return 360 rather than 0 when snapping close to a full turn.
+    return kotlin.math.round(normalized / 90f) * 90f
 }
 
 private fun calculateRotationFitScale(width: Int, height: Int, rotationDegrees: Float): Float {
