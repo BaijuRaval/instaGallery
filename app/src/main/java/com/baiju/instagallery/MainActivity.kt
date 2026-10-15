@@ -1346,19 +1346,19 @@ private fun ReelsViewer(
     val context = LocalContext.current
     val pagerState = rememberPagerState(initialPage = startIndex, pageCount = { items.size })
     var playing by remember { mutableStateOf(true) }
-    var pagerScrollEnabled by remember { mutableStateOf(true) }
+    var currentMediaZoomed by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(pagerState.currentPage) {
-        pagerScrollEnabled = true
+        currentMediaZoomed = false
     }
 
     LaunchedEffect(pagerState.currentPage, items) {
         items.getOrNull(pagerState.currentPage)?.let { onPageViewed(it.uri) }
     }
 
-    LaunchedEffect(pagerState.currentPage, autoPlayNext, pagerScrollEnabled) {
-        if (!pagerScrollEnabled) return@LaunchedEffect
+    LaunchedEffect(pagerState.currentPage, autoPlayNext, currentMediaZoomed) {
+        if (currentMediaZoomed) return@LaunchedEffect
         val item = items.getOrNull(pagerState.currentPage) ?: return@LaunchedEffect
         if (!item.isVideo && autoPlayNext) {
             val page = pagerState.currentPage
@@ -1375,7 +1375,6 @@ private fun ReelsViewer(
         VerticalPager(
             state = pagerState,
             modifier = Modifier.fillMaxSize(),
-            userScrollEnabled = pagerScrollEnabled,
             beyondViewportPageCount = 1
         ) { page ->
             val item = items[page]
@@ -1395,7 +1394,7 @@ private fun ReelsViewer(
                         }
                     },
                     onTogglePlay = { playing = !playing },
-                    onPagerScrollEnabledChanged = { pagerScrollEnabled = it }
+                    onZoomChanged = { currentMediaZoomed = it }
                 )
             } else {
                 var zoom by remember(item.uri) { mutableFloatStateOf(1f) }
@@ -1412,7 +1411,6 @@ private fun ReelsViewer(
                         .pointerInput(item.uri) {
                             awaitEachGesture {
                                 awaitFirstDown(requireUnconsumed = false)
-                                if (zoom > 1.001f) pagerScrollEnabled = false
                                 var usedMultiTouch = false
                                 while (true) {
                                     val event = awaitPointerEvent(PointerEventPass.Initial)
@@ -1420,12 +1418,12 @@ private fun ReelsViewer(
                                     if (pointers.isEmpty()) {
                                         if (usedMultiTouch) {
                                             rotation = snapRotationToRightAngle(rotation)
+                                            pan = Offset.Zero
                                         }
                                         break
                                     }
                                     if (pointers.size >= 2) {
                                         usedMultiTouch = true
-                                        pagerScrollEnabled = false
                                         val first = pointers[0]
                                         val second = pointers[1]
                                         val previousDistance = (first.previousPosition - second.previousPosition).getDistance()
@@ -1458,7 +1456,7 @@ private fun ReelsViewer(
                                         }
                                     }
                                 }
-                                pagerScrollEnabled = zoom <= 1.001f
+                                currentMediaZoomed = zoom > 1.001f
                             }
                         }
                         .graphicsLayer(
@@ -1486,7 +1484,7 @@ private fun VideoPage(
     rememberLastPlayed: Boolean,
     onEnded: () -> Unit,
     onTogglePlay: () -> Unit,
-    onPagerScrollEnabledChanged: (Boolean) -> Unit
+    onZoomChanged: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -1575,7 +1573,6 @@ private fun VideoPage(
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     if (!active) return@awaitEachGesture
-                    if (zoom > 1.001f) onPagerScrollEnabledChanged(false)
 
                     val downPosition = down.position
                     var didMove = false
@@ -1603,6 +1600,7 @@ private fun VideoPage(
                         if (pointers.isEmpty()) {
                             if (multiTouch) {
                                 rotation = snapRotationToRightAngle(rotation)
+                                pan = Offset.Zero
                             }
                             finished = true
                             continue
@@ -1610,7 +1608,6 @@ private fun VideoPage(
 
                         if (pointers.size >= 2) {
                             multiTouch = true
-                            onPagerScrollEnabledChanged(false)
                             if (longPressTriggered) {
                                 player.setPlaybackSpeed(1f)
                                 fastForwarding = false
@@ -1681,6 +1678,11 @@ private fun VideoPage(
                             seekBarVisible = true
                             change.consume()
                         }
+                        else if (zoom > 1.001f && kotlin.math.abs(dy) > viewConfiguration.touchSlop) {
+                            // At zoom > 1, vertical drags pan the media rather than pulling the pager.
+                            pan += change.position - change.previousPosition
+                            change.consume()
+                        }
                     }
 
                     if (longPressTriggered && !horizontalSeeking) {
@@ -1688,7 +1690,7 @@ private fun VideoPage(
                         fastForwarding = false
                     }
                     seekBarVisible = false
-                    onPagerScrollEnabledChanged(zoom <= 1.001f)
+                    onZoomChanged(zoom > 1.001f)
                     if (!didMove && !multiTouch && !longPressTriggered) onTogglePlay()
                 }
             },
