@@ -849,6 +849,8 @@ private fun GalleryApp() {
                                         transferMode != null -> "Choose destination"
                                         tab == "Folders" && selectedAlbum != "All media" -> selectedAlbum
                                         tab == "Folders" -> "Folder"
+                                        tab == "Images" -> "Images"
+                                        tab == "Videos" -> "Videos"
                                         else -> "Reel"
                                     }, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Text(if (transferMode != null) "${transferMode} to a folder" else "${visible.size} items", color = Color.LightGray, fontSize = 12.sp)
