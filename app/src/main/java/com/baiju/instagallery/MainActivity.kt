@@ -519,7 +519,6 @@ private fun GalleryApp() {
                 startIndex = startIndex,
                 imageLoader = thumbnailLoader,
                 autoPlayNext = autoPlayNext,
-                loopMedia = loopMedia,
                 rememberLastPlayed = rememberLastPlayed,
                 onPageViewed = { uri ->
                     viewerCurrentUri = uri
