@@ -13,6 +13,7 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.provider.MediaStore
 import android.provider.Settings
 import android.view.LayoutInflater
@@ -39,6 +40,7 @@ import androidx.activity.result.IntentSenderRequest
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -607,7 +609,7 @@ private fun GalleryApp() {
         }
     }
 
-    LaunchedEffect(pendingGridScrollUri, viewerStartUri, visible) {
+    LaunchedEffect(pendingGridScrollUri, viewerStartUri, viewerDisplayUri, visible) {
         val target = pendingGridScrollUri
         if (target != null && viewerStartUri == null && viewerDisplayUri == null) {
             val index = visible.indexOfFirst { it.uri == target }
@@ -1612,6 +1614,14 @@ private fun rememberThumbnailRequest(context: Context, item: GalleryMedia, cache
                 .build()
         } else null
     }
+
+private fun Context.hasDocumentAccess(): Boolean {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        Environment.isExternalStorageManager()
+    } else {
+        ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+    }
+}
 
 private fun Context.hasMediaPermission(): Boolean {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
