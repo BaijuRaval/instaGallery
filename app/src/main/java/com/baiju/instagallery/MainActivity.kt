@@ -391,6 +391,7 @@ private fun VideoPage(
         onDispose { player.removeListener(listener) }
     }
 
+    val exoPlayer = player
     Box(
         Modifier.fillMaxSize().pointerInput(item.uri, active) {
             detectTapGestures(onTap = { if (active) onTogglePlay() })
@@ -401,11 +402,11 @@ private fun VideoPage(
             factory = { ctx ->
                 PlayerView(ctx).apply {
                     useController = false
-                    player = this@apply.player
+                    this.player = exoPlayer
                     setShutterBackgroundColor(android.graphics.Color.BLACK)
                 }
             },
-            update = { it.player = player },
+            update = { it.player = exoPlayer },
             modifier = Modifier.fillMaxSize()
         )
     }
