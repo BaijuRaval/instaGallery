@@ -157,7 +157,20 @@ private fun GalleryApp() {
         val copied = targets.count { context.copyMediaToFolder(it, destination.relativePath) }
         if (transferMode == "Move" && copied == targets.size) {
             pendingTransferMessage = "Moved $copied item(s) to $folder."
-            deleteMedia(targets)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    val request = MediaStore.createDeleteRequest(context.contentResolver, targets.map { it.uri })
+                    deleteLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
+                } else {
+                    targets.forEach { context.contentResolver.delete(it.uri, null, null) }
+                    refresh()
+                    statusMessage = "Moved $copied item(s) to $folder."
+                    pendingTransferMessage = null
+                }
+            } catch (_: Exception) {
+                statusMessage = "Files copied to $folder, but Android could not delete the originals."
+                pendingTransferMessage = null
+            }
         } else {
             statusMessage = if (transferMode == "Copy") {
                 "Copied $copied of ${targets.size} item(s) to $folder."
