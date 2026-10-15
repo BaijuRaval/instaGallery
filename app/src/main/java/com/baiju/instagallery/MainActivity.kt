@@ -1238,6 +1238,74 @@ private fun GalleryApp() {
 }
 
 @Composable
+private fun GalleryMenuScreen(
+    currentView: String,
+    onClose: () -> Unit,
+    onSelectView: (String) -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    Column(
+        Modifier.fillMaxSize().background(Color(0xFF101010)).statusBarsPadding().navigationBarsPadding().padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onClose) { Icon(Icons.Default.Close, "Close menu", tint = Color.White) }
+            Text("Menu", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold)
+        }
+        Text("Choose view", color = Color.LightGray, fontSize = 13.sp)
+        Surface(
+            onClick = { onSelectView("Folders") },
+            color = if (currentView == "Folder") Color(0xFF3A2630) else Color(0xFF191919),
+            shape = MaterialTheme.shapes.large,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Folder, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(30.dp))
+                Spacer(Modifier.width(16.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Folder view", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Browse folders and open their media", color = Color.LightGray, fontSize = 13.sp)
+                }
+                if (currentView == "Folder") Icon(Icons.Default.ChevronRight, null, tint = Color.White)
+            }
+        }
+        Surface(
+            onClick = { onSelectView("Reel") },
+            color = if (currentView == "Reel") Color(0xFF3A2630) else Color(0xFF191919),
+            shape = MaterialTheme.shapes.large,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.PlayArrow, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(30.dp))
+                Spacer(Modifier.width(16.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Reel view", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Swipe through photos and videos", color = Color.LightGray, fontSize = 13.sp)
+                }
+                if (currentView == "Reel") Icon(Icons.Default.ChevronRight, null, tint = Color.White)
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Surface(
+            onClick = onOpenSettings,
+            color = Color(0xFF191919),
+            shape = MaterialTheme.shapes.large,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Settings, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(28.dp))
+                Spacer(Modifier.width(16.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Settings", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Playback, auto-fit and hidden folders", color = Color.LightGray, fontSize = 13.sp)
+                }
+                Icon(Icons.Default.ChevronRight, null, tint = Color.LightGray)
+            }
+        }
+    }
+}
+
+@Composable
 private fun SettingsScreen(
     page: String,
     folderNames: List<String>,
