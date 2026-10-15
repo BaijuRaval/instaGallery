@@ -651,7 +651,7 @@ private fun GalleryApp() {
     MaterialTheme(colorScheme = darkColorScheme(background = Color(0xFF101010), surface = Color(0xFF191919), primary = Color(0xFFFF4D7D))) {
         AnimatedContent(
             targetState = settingsPage,
-            transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(160)) },
+            transitionSpec = { slideInVertically(tween(220)) { height -> height / 10 } togetherWith slideOutVertically(tween(160)) { height -> -height / 10 } },
             label = "settingsTransition"
         ) { targetSettingsPage ->
         if (targetSettingsPage != null) {
@@ -751,7 +751,7 @@ private fun GalleryApp() {
                         selectedFolder != null -> "folder" to selectedFolder
                         else -> "normal" to null
                     },
-                    transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(120)) },
+                    transitionSpec = { expandIn(expandFrom = Alignment.Center, animationSpec = tween(160)) togetherWith shrinkOut(shrinkTowards = Alignment.Center, animationSpec = tween(120)) },
                     modifier = Modifier.fillMaxWidth().animateContentSize(),
                     label = "headerActionTransition"
                 ) { headerTarget ->
@@ -809,16 +809,16 @@ private fun GalleryApp() {
                     transitionSpec = {
                         if (targetState.first != initialState.first) {
                             val towardReel = targetState.first == "Reel"
-                            (fadeIn(tween(270)) + slideInHorizontally(tween(270)) { width -> if (towardReel) width / 4 else -width / 4 }) togetherWith
-                                (fadeOut(tween(190)) + slideOutHorizontally(tween(190)) { width -> if (towardReel) -width / 4 else width / 4 })
+                            slideInHorizontally(tween(270)) { width -> if (towardReel) width / 4 else -width / 4 } togetherWith
+                                slideOutHorizontally(tween(190)) { width -> if (towardReel) -width / 4 else width / 4 }
                         } else {
                             val openingFolder = targetState.second != "All media"
                             if (openingFolder) {
-                                (fadeIn(tween(300)) + expandIn(expandFrom = Alignment.Center, animationSpec = tween(300))) togetherWith
-                                    (fadeOut(tween(200)) + shrinkOut(shrinkTowards = Alignment.Center, animationSpec = tween(200)))
+                                expandIn(expandFrom = Alignment.Center, animationSpec = tween(300, easing = FastOutSlowInEasing)) togetherWith
+                                    shrinkOut(shrinkTowards = Alignment.Center, animationSpec = tween(200, easing = FastOutSlowInEasing))
                             } else {
-                                (fadeIn(tween(300)) + expandIn(expandFrom = Alignment.TopCenter, animationSpec = tween(300))) togetherWith
-                                    (fadeOut(tween(200)) + shrinkOut(shrinkTowards = Alignment.Center, animationSpec = tween(200)))
+                                expandIn(expandFrom = Alignment.TopCenter, animationSpec = tween(300, easing = FastOutSlowInEasing)) togetherWith
+                                    shrinkOut(shrinkTowards = Alignment.Center, animationSpec = tween(200, easing = FastOutSlowInEasing))
                             }
                         }
                     },
@@ -1050,7 +1050,7 @@ private fun GalleryApp() {
                         selectedFolder != null -> "folder" to selectedFolder
                         else -> "tabs" to null
                     },
-                    transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(120)) },
+                    transitionSpec = { expandIn(expandFrom = Alignment.Center, animationSpec = tween(160)) togetherWith shrinkOut(shrinkTowards = Alignment.Center, animationSpec = tween(120)) },
                     modifier = Modifier.fillMaxWidth().animateContentSize(),
                     label = "bottomActionTransition"
                 ) { footerTarget ->
