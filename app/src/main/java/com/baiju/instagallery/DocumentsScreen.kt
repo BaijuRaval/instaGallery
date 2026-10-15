@@ -239,7 +239,7 @@ internal fun DocumentsScreen(
                             contentPadding = PaddingValues(6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(allFiles, key = { it.uri.toString() }) { doc ->
-                                DocumentTile(doc, true) { openedDocument = doc }
+                                DocumentTile(doc, false) { openedDocument = doc }
                             }
                         }
                     } else {
