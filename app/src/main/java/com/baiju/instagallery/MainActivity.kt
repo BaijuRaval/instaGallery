@@ -100,7 +100,6 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import coil.ImageLoader
 import coil.compose.AsyncImage
-import coil.compose.rememberAsyncImagePainter
 import coil.memory.MemoryCache
 import coil.request.ImageRequest
 import kotlinx.coroutines.Dispatchers
@@ -1441,7 +1440,7 @@ private fun ReelsViewer(
                 var zoomAnimJob by remember(item.uri) { mutableStateOf<Job?>(null) }
                 var screenFillActive by remember(item.uri) { mutableStateOf(false) }
                 var viewportSize by remember(item.uri) { mutableStateOf(IntSize.Zero) }
-                // Decode to screen dimensions instead of the full camera-resolution image.
+                // Use AsyncImage for constraint-aware Coil rendering; keep decode bounded to screen size.
                 val configuration = LocalConfiguration.current
                 val density = LocalDensity.current
                 val imageWidthPx = with(density) { configuration.screenWidthDp.dp.roundToPx().coerceAtLeast(1) }
@@ -1453,18 +1452,15 @@ private fun ReelsViewer(
                         .crossfade(false)
                         .build()
                 }
-                val imagePainter = rememberAsyncImagePainter(
-                    model = imageRequest,
-                    imageLoader = imageLoader,
-                    contentScale = ContentScale.Fit
-                )
+                var imageAspectRatio by remember(item.uri) { mutableFloatStateOf(0f) }
                 val screenFillZoom = calculateScreenFillZoom(
                     viewportSize.width, viewportSize.height,
-                    imagePainter.intrinsicSize.width, imagePainter.intrinsicSize.height, rotation
+                    imageAspectRatio, 0f, rotation
                 )
                 val latestScreenFillZoom by rememberUpdatedState(screenFillZoom)
-                Image(
-                    painter = imagePainter,
+                AsyncImage(
+                    model = imageRequest,
+                    imageLoader = imageLoader,
                     contentDescription = item.name,
                     modifier = Modifier.fillMaxSize()
                         .onSizeChanged { viewportSize = it }
@@ -1579,7 +1575,21 @@ private fun ReelsViewer(
                             rotationZ = rotation
                             transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
                         },
-                    contentScale = ContentScale.Fit
+                    contentScale = ContentScale.Fit,
+                    onState = { state ->
+                        if (state is coil.compose.AsyncImagePainter.State.Success) {
+                            val intrinsic = state.painter.intrinsicSize
+                            if (
+                                intrinsic.width.isFinite() && intrinsic.height.isFinite() &&
+                                intrinsic.width > 0f && intrinsic.height > 0f
+                            ) {
+                                val aspect = intrinsic.width / intrinsic.height
+                                if (aspect.isFinite() && aspect > 0f && imageAspectRatio != aspect) {
+                                    imageAspectRatio = aspect
+                                }
+                            }
+                        }
+                    }
                 )
             }
         }
