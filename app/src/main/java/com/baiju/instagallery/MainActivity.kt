@@ -1428,6 +1428,7 @@ private fun ReelsViewer(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun VideoPage(
     item: GalleryMedia,
@@ -1605,7 +1606,7 @@ private fun VideoPage(
                 factory = { ctx ->
                     PlayerView(ctx).apply {
                         useController = false
-                        player = exoPlayer
+                        this.player = exoPlayer
                         setShutterBackgroundColor(android.graphics.Color.BLACK)
                     }
                 },
