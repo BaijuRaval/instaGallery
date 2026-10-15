@@ -99,6 +99,7 @@ import androidx.media3.ui.PlayerView
 import coil.ImageLoader
 import coil.compose.AsyncImage
 import coil.compose.rememberAsyncImagePainter
+import coil.compose.rememberConstraintsSizeResolver
 import coil.memory.MemoryCache
 import coil.request.ImageRequest
 import kotlinx.coroutines.Dispatchers
@@ -1439,10 +1440,20 @@ private fun ReelsViewer(
                 var zoomAnimJob by remember(item.uri) { mutableStateOf<Job?>(null) }
                 var screenFillActive by remember(item.uri) { mutableStateOf(false) }
                 var viewportSize by remember(item.uri) { mutableStateOf(IntSize.Zero) }
-                val imageRequest = remember(item.uri) {
-                    ImageRequest.Builder(context).data(item.uri).crossfade(false).build()
+                // Decode only to the visible viewer size to avoid huge full-resolution bitmaps.
+                val imageSizeResolver = rememberConstraintsSizeResolver()
+                val imageRequest = remember(item.uri, imageSizeResolver) {
+                    ImageRequest.Builder(context)
+                        .data(item.uri)
+                        .size(imageSizeResolver)
+                        .crossfade(false)
+                        .build()
                 }
-                val imagePainter = rememberAsyncImagePainter(model = imageRequest, imageLoader = imageLoader)
+                val imagePainter = rememberAsyncImagePainter(
+                    model = imageRequest,
+                    imageLoader = imageLoader,
+                    contentScale = ContentScale.Fit
+                )
                 val screenFillZoom = calculateScreenFillZoom(
                     viewportSize.width, viewportSize.height,
                     imagePainter.intrinsicSize.width, imagePainter.intrinsicSize.height, rotation
@@ -1452,6 +1463,7 @@ private fun ReelsViewer(
                     painter = imagePainter,
                     contentDescription = item.name,
                     modifier = Modifier.fillMaxSize()
+                        .then(imageSizeResolver)
                         .onSizeChanged { viewportSize = it }
                         .pointerInput(item.uri) {
                             awaitEachGesture {
