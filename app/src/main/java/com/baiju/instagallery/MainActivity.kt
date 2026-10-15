@@ -19,6 +19,10 @@ import android.view.LayoutInflater
 import android.media.MediaScannerConnection
 import java.io.File
 import java.io.FileOutputStream
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -1407,8 +1411,18 @@ private fun ReelsViewer(
                 var zoom by remember(item.uri) { mutableFloatStateOf(1f) }
                 var pan by remember(item.uri) { mutableStateOf(Offset.Zero) }
                 var rotation by remember(item.uri) { mutableFloatStateOf(0f) }
+                var rotationSettling by remember(item.uri) { mutableStateOf(false) }
+                val displayRotation by animateFloatAsState(
+                    targetValue = rotation,
+                    animationSpec = if (rotationSettling) spring(
+                        dampingRatio = 1f,
+                        stiffness = Spring.StiffnessMediumLow
+                    ) else snap(),
+                    finishedListener = { if (rotationSettling) rotationSettling = false },
+                    label = "imageRotation"
+                )
                 var viewportSize by remember(item.uri) { mutableStateOf(IntSize.Zero) }
-                val rotationFit = calculateRotationFitScale(viewportSize.width, viewportSize.height, rotation)
+                val rotationFit = calculateRotationFitScale(viewportSize.width, viewportSize.height, displayRotation)
                 AsyncImage(
                     model = ImageRequest.Builder(context).data(item.uri).crossfade(false).build(),
                     imageLoader = imageLoader,
@@ -1418,6 +1432,10 @@ private fun ReelsViewer(
                         .pointerInput(item.uri) {
                             awaitEachGesture {
                                 awaitFirstDown(requireUnconsumed = false)
+                                if (rotationSettling) {
+                                    rotation = displayRotation
+                                    rotationSettling = false
+                                }
                                 var usedMultiTouch = false
                                 while (true) {
                                     val event = awaitPointerEvent(PointerEventPass.Initial)
@@ -1425,7 +1443,7 @@ private fun ReelsViewer(
                                     if (pointers.isEmpty()) {
                                         if (usedMultiTouch) {
                                             rotation = snapRotationToRightAngle(rotation)
-                                            pan = Offset.Zero
+                                            rotationSettling = true
                                         }
                                         break
                                     }
@@ -1437,22 +1455,26 @@ private fun ReelsViewer(
                                         val currentDistance = (first.position - second.position).getDistance()
                                         if (previousDistance > 0.5f) {
                                             val oldZoom = zoom
-                                            val newZoom = (oldZoom * (currentDistance / previousDistance)).coerceIn(1f, 5f)
+                                            val newZoom = (oldZoom * (currentDistance / previousDistance)).coerceIn(0.25f, 5f)
                                             val oldCenter = (first.previousPosition + second.previousPosition) / 2f
                                             val newCenter = (first.position + second.position) / 2f
-                                            rotation = (rotation + calculateRotationDelta(
+                                            val oldRotation = rotation
+                                            val newRotation = oldRotation + calculateRotationDelta(
                                                 first.previousPosition, second.previousPosition,
                                                 first.position, second.position
-                                            )) % 360f
-                                            zoom = newZoom
-                                            pan = calculatePinchPan(
+                                            )
+                                            pan = calculateTransformPan(
                                                 currentPan = pan,
                                                 oldZoom = oldZoom,
                                                 newZoom = newZoom,
+                                                oldRotation = oldRotation,
+                                                newRotation = newRotation,
                                                 oldCentroid = oldCenter,
                                                 newCentroid = newCenter,
                                                 containerSize = size
                                             )
+                                            rotation = newRotation
+                                            zoom = newZoom
                                         }
                                         pointers.forEach { it.consume() }
                                     } else if (usedMultiTouch) {
@@ -1480,7 +1502,7 @@ private fun ReelsViewer(
                             scaleY = zoom * rotationFit,
                             translationX = pan.x,
                             translationY = pan.y,
-                            rotationZ = rotation,
+                            rotationZ = displayRotation,
                             transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
                         ),
                     contentScale = ContentScale.Fit
@@ -1524,8 +1546,18 @@ private fun VideoPage(
     var zoom by remember(item.uri) { mutableFloatStateOf(1f) }
     var pan by remember(item.uri) { mutableStateOf(Offset.Zero) }
     var rotation by remember(item.uri) { mutableFloatStateOf(0f) }
+    var rotationSettling by remember(item.uri) { mutableStateOf(false) }
+    val displayRotation by animateFloatAsState(
+        targetValue = rotation,
+        animationSpec = if (rotationSettling) spring(
+            dampingRatio = 1f,
+            stiffness = Spring.StiffnessMediumLow
+        ) else snap(),
+        finishedListener = { if (rotationSettling) rotationSettling = false },
+        label = "videoRotation"
+    )
     var viewportSize by remember(item.uri) { mutableStateOf(IntSize.Zero) }
-    val rotationFit = calculateRotationFitScale(viewportSize.width, viewportSize.height, rotation)
+    val rotationFit = calculateRotationFitScale(viewportSize.width, viewportSize.height, displayRotation)
     var seekBarVisible by remember(item.uri) { mutableStateOf(false) }
     var fastForwarding by remember(item.uri) { mutableStateOf(false) }
     var currentPositionMs by remember(item.uri) { mutableLongStateOf(initialPositionMs) }
@@ -1589,6 +1621,10 @@ private fun VideoPage(
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     if (!active) return@awaitEachGesture
+                    if (rotationSettling) {
+                        rotation = displayRotation
+                        rotationSettling = false
+                    }
 
                     val downPosition = down.position
                     var didMove = false
@@ -1616,7 +1652,7 @@ private fun VideoPage(
                         if (pointers.isEmpty()) {
                             if (multiTouch) {
                                 rotation = snapRotationToRightAngle(rotation)
-                                pan = Offset.Zero
+                                rotationSettling = true
                             }
                             finished = true
                             continue
@@ -1634,22 +1670,26 @@ private fun VideoPage(
                             val currentDistance = (first.position - second.position).getDistance()
                             if (previousDistance > 0.5f) {
                                 val oldZoom = zoom
-                                val newZoom = (oldZoom * (currentDistance / previousDistance)).coerceIn(1f, 5f)
+                                val newZoom = (oldZoom * (currentDistance / previousDistance)).coerceIn(0.25f, 5f)
                                 val oldCenter = (first.previousPosition + second.previousPosition) / 2f
                                 val newCenter = (first.position + second.position) / 2f
-                                rotation = (rotation + calculateRotationDelta(
+                                val oldRotation = rotation
+                                val newRotation = oldRotation + calculateRotationDelta(
                                     first.previousPosition, second.previousPosition,
                                     first.position, second.position
-                                )) % 360f
-                                zoom = newZoom
-                                pan = calculatePinchPan(
+                                )
+                                pan = calculateTransformPan(
                                     currentPan = pan,
                                     oldZoom = oldZoom,
                                     newZoom = newZoom,
+                                    oldRotation = oldRotation,
+                                    newRotation = newRotation,
                                     oldCentroid = oldCenter,
                                     newCentroid = newCenter,
                                     containerSize = size
                                 )
+                                rotation = newRotation
+                                zoom = newZoom
                             }
                             pointers.forEach { it.consume() }
                             seekBarVisible = false
@@ -1732,7 +1772,7 @@ private fun VideoPage(
                 scaleY = zoom * rotationFit,
                 translationX = pan.x,
                 translationY = pan.y,
-                rotationZ = rotation,
+                rotationZ = displayRotation,
                 transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
             )
         )
@@ -1784,9 +1824,8 @@ private fun VideoPage(
 }
 
 private fun snapRotationToRightAngle(angle: Float): Float {
-    val normalized = ((angle % 360f) + 360f) % 360f
-    // Return 360 rather than 0 when snapping close to a full turn.
-    return kotlin.math.round(normalized / 90f) * 90f
+    // Preserve the nearest equivalent turn (e.g. 359° -> 360°, not 0°) for a short, smooth snap.
+    return kotlin.math.round(angle / 90f) * 90f
 }
 
 private fun calculateRotationFitScale(width: Int, height: Int, rotationDegrees: Float): Float {
@@ -1816,20 +1855,33 @@ private fun calculateRotationDelta(
     return delta
 }
 
-private fun calculatePinchPan(
+private fun calculateTransformPan(
     currentPan: Offset,
     oldZoom: Float,
     newZoom: Float,
+    oldRotation: Float,
+    newRotation: Float,
     oldCentroid: Offset,
     newCentroid: Offset,
     containerSize: IntSize
 ): Offset {
-    if (newZoom <= 1.001f) return Offset.Zero
     val center = Offset(containerSize.width / 2f, containerSize.height / 2f)
-    val scaleChange = newZoom / oldZoom.coerceAtLeast(0.001f)
-    // Transform around the midpoint between the fingers, keeping that image point anchored.
-    return currentPan + (newCentroid - oldCentroid) +
-        (oldCentroid - center - currentPan) * (1f - scaleChange)
+    val oldFit = calculateRotationFitScale(containerSize.width, containerSize.height, oldRotation)
+    val newFit = calculateRotationFitScale(containerSize.width, containerSize.height, newRotation)
+    val oldScale = (oldZoom * oldFit).coerceAtLeast(0.001f)
+    val newScale = newZoom * newFit
+    val scaleChange = newScale / oldScale
+
+    // Preserve the image point under the fingers while scale and rotation change together.
+    val radians = Math.toRadians((newRotation - oldRotation).toDouble())
+    val cos = kotlin.math.cos(radians).toFloat()
+    val sin = kotlin.math.sin(radians).toFloat()
+    val previousVector = oldCentroid - center - currentPan
+    val rotatedVector = Offset(
+        previousVector.x * cos - previousVector.y * sin,
+        previousVector.x * sin + previousVector.y * cos
+    )
+    return newCentroid - center - rotatedVector * scaleChange
 }
 
 private fun formatPlaybackTime(millis: Long): String {
