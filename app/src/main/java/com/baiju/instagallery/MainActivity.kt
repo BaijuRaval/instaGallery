@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
+import android.provider.Settings
 import android.media.MediaScannerConnection
 import java.io.File
 import java.io.FileOutputStream
@@ -103,6 +104,7 @@ private fun GalleryApp() {
     var renameText by remember { mutableStateOf("") }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var settingsOpen by remember { mutableStateOf(false) }
+    var manageMediaInfoOpen by remember { mutableStateOf(false) }
     var albumMenu by remember { mutableStateOf(false) }
     var actionMenu by remember { mutableStateOf(false) }
     var transferMode by remember { mutableStateOf<String?>(null) }
@@ -243,7 +245,7 @@ private fun GalleryApp() {
             controller.show(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
         }
     }
-    val hasInnerScreen = viewerStartUri != null || actionMenu || settingsOpen || albumMenu ||
+    val hasInnerScreen = viewerStartUri != null || actionMenu || settingsOpen || manageMediaInfoOpen || albumMenu ||
         infoItem != null || renameItem != null || statusMessage != null || transferMode != null ||
         selected.isNotEmpty() || (tab == "Folders" && selectedAlbum != "All media") || tab != "Reel"
     BackHandler(enabled = hasInnerScreen) {
@@ -252,6 +254,7 @@ private fun GalleryApp() {
             transferMode != null -> cancelTransfer()
             actionMenu -> actionMenu = false
             settingsOpen -> settingsOpen = false
+            manageMediaInfoOpen -> manageMediaInfoOpen = false
             albumMenu -> albumMenu = false
             infoItem != null -> infoItem = null
             renameItem != null -> renameItem = null
@@ -290,7 +293,14 @@ private fun GalleryApp() {
                             DropdownMenuItem(text = { Text("Details") }, leadingIcon = { Icon(Icons.Default.Info, null) }, onClick = { actionMenu = false; media.firstOrNull { it.uri in selected }?.let { infoItem = it } })
                             DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Default.Edit, null) }, onClick = { actionMenu = false; media.firstOrNull { it.uri in selected }?.let { renameItem = it; renameText = it.name } })
                             DropdownMenuItem(text = { Text("Copy") }, leadingIcon = { Icon(Icons.Default.ContentCopy, null) }, onClick = { beginTransfer("Copy") })
-                            DropdownMenuItem(text = { Text("Move") }, leadingIcon = { Icon(Icons.Default.DriveFileMove, null) }, onClick = { beginTransfer("Move") })
+                            DropdownMenuItem(text = { Text("Move") }, leadingIcon = { Icon(Icons.Default.DriveFileMove, null) }, onClick = {
+                                actionMenu = false
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !MediaStore.canManageMedia(context)) {
+                                    manageMediaInfoOpen = true
+                                } else {
+                                    beginTransfer("Move")
+                                }
+                            })
                             DropdownMenuItem(text = { Text("Delete") }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = Color(0xFFFF6680)) }, onClick = { actionMenu = false; deleteMedia(media.filter { it.uri in selected }) })
                             DropdownMenuItem(text = { Text("Cancel selection") }, onClick = { actionMenu = false; selected = emptySet() })
                         }
@@ -338,6 +348,25 @@ private fun GalleryApp() {
                 }
             }
             if (settingsOpen) AlertDialog(onDismissRequest = { settingsOpen = false }, title = { Text("Settings") }, text = { Text("instaGallery • Offline media gallery\nYour media stays on this device.") }, confirmButton = { TextButton(onClick = { settingsOpen = false }) { Text("Done") } })
+            if (manageMediaInfoOpen) AlertDialog(
+                onDismissRequest = { manageMediaInfoOpen = false },
+                title = { Text("Enable direct Move") },
+                text = { Text("Android 12 and newer can skip the delete confirmation after you allow media management once. Tap Continue to open system settings, enable \"Allow management of media\" for instaGallery, then return and choose Move again. Files are deleted only after every copy succeeds.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        manageMediaInfoOpen = false
+                        try {
+                            context.startActivity(
+                                Intent(Settings.ACTION_REQUEST_MANAGE_MEDIA)
+                                    .setData(Uri.parse("package:" + context.packageName))
+                            )
+                        } catch (_: Exception) {
+                            statusMessage = "Could not open media management settings. Open Android Settings > Apps > Special app access > Media management and enable instaGallery."
+                        }
+                    }) { Text("Continue") }
+                },
+                dismissButton = { TextButton(onClick = { manageMediaInfoOpen = false }) { Text("Cancel") } }
+            )
             if (albumMenu) {
                 val albums = listOf("All media") + media.map { it.album }.distinct().sorted()
                 AlertDialog(onDismissRequest = { albumMenu = false }, title = { Text("Folders") }, text = {
