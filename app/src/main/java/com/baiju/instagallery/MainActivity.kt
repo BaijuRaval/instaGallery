@@ -42,7 +42,6 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.layout.*
@@ -667,21 +666,36 @@ private fun GalleryApp() {
                                 modifier = Modifier.weight(1f).fillMaxWidth()
                             ) {
                             LazyVerticalGrid(state = folderGridState, columns = GridCells.Fixed(folderGridColumns), modifier = Modifier.fillMaxSize().animateContentSize().pointerInput(Unit) {
-                                var accumulatedZoom = 1f
-                                detectTransformGestures { _, _, zoom, _ ->
-                                    accumulatedZoom *= zoom
-                                    if (accumulatedZoom > 1.16f) {
-                                        folderGridColumns = (folderGridColumns - 1).coerceAtLeast(1)
-                                        accumulatedZoom = 1f
-                                    } else if (accumulatedZoom < 0.86f) {
-                                        folderGridColumns = (folderGridColumns + 1).coerceAtMost(4)
-                                        accumulatedZoom = 1f
+                                awaitEachGesture {
+                                    awaitFirstDown(requireUnconsumed = false)
+                                    var accumulatedZoom = 1f
+                                    while (true) {
+                                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                                        val pointers = event.changes.filter { it.pressed }
+                                        if (pointers.isEmpty()) break
+                                        if (pointers.size >= 2) {
+                                            val first = pointers[0]
+                                            val second = pointers[1]
+                                            val previousDistance = (first.previousPosition - second.previousPosition).getDistance()
+                                            val currentDistance = (first.position - second.position).getDistance()
+                                            if (previousDistance > 0.5f) {
+                                                accumulatedZoom *= currentDistance / previousDistance
+                                                if (accumulatedZoom > 1.16f) {
+                                                    folderGridColumns = (folderGridColumns - 1).coerceAtLeast(1)
+                                                    accumulatedZoom = 1f
+                                                } else if (accumulatedZoom < 0.86f) {
+                                                    folderGridColumns = (folderGridColumns + 1).coerceAtMost(4)
+                                                    accumulatedZoom = 1f
+                                                }
+                                            }
+                                            pointers.forEach { it.consume() }
+                                        }
                                     }
                                 }
                             }, contentPadding = PaddingValues(6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 items(folders.keys.toList(), key = { it }) { folder ->
                                     val folderItems = folders[folder].orEmpty()
-                                    Box(Modifier.animateItemPlacement()) {
+                                    Box(Modifier.animateItemPlacement().animateContentSize()) {
                                     FolderTile(
                                         name = folder,
                                         items = folderItems,
@@ -721,15 +735,30 @@ private fun GalleryApp() {
                             state = gridState,
                             columns = GridCells.Fixed(mediaGridColumns),
                             modifier = Modifier.fillMaxSize().animateContentSize().pointerInput(Unit) {
-                                var accumulatedZoom = 1f
-                                detectTransformGestures { _, _, zoom, _ ->
-                                    accumulatedZoom *= zoom
-                                    if (accumulatedZoom > 1.16f) {
-                                        mediaGridColumns = (mediaGridColumns - 1).coerceAtLeast(2)
-                                        accumulatedZoom = 1f
-                                    } else if (accumulatedZoom < 0.86f) {
-                                        mediaGridColumns = (mediaGridColumns + 1).coerceAtMost(6)
-                                        accumulatedZoom = 1f
+                                awaitEachGesture {
+                                    awaitFirstDown(requireUnconsumed = false)
+                                    var accumulatedZoom = 1f
+                                    while (true) {
+                                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                                        val pointers = event.changes.filter { it.pressed }
+                                        if (pointers.isEmpty()) break
+                                        if (pointers.size >= 2) {
+                                            val first = pointers[0]
+                                            val second = pointers[1]
+                                            val previousDistance = (first.previousPosition - second.previousPosition).getDistance()
+                                            val currentDistance = (first.position - second.position).getDistance()
+                                            if (previousDistance > 0.5f) {
+                                                accumulatedZoom *= currentDistance / previousDistance
+                                                if (accumulatedZoom > 1.16f) {
+                                                    mediaGridColumns = (mediaGridColumns - 1).coerceAtLeast(2)
+                                                    accumulatedZoom = 1f
+                                                } else if (accumulatedZoom < 0.86f) {
+                                                    mediaGridColumns = (mediaGridColumns + 1).coerceAtMost(6)
+                                                    accumulatedZoom = 1f
+                                                }
+                                            }
+                                            pointers.forEach { it.consume() }
+                                        }
                                     }
                                 }
                             }.pointerInput(visible, gridState) {
@@ -816,7 +845,7 @@ private fun GalleryApp() {
                             verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             items(visible, key = { it.uri.toString() }) { item ->
-                                Box(Modifier.animateItemPlacement()) {
+                                Box(Modifier.animateItemPlacement().animateContentSize()) {
                                     MediaThumbnail(
                                         item, item.uri in selected, thumbnailLoader, thumbnailRevision,
                                         highlighted = item.uri == blinkMediaUri
