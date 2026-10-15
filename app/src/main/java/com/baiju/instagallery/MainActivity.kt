@@ -73,6 +73,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -1411,8 +1412,14 @@ private fun ReelsViewer(
                                             val oldCenter = (first.previousPosition + second.previousPosition) / 2f
                                             val newCenter = (first.position + second.position) / 2f
                                             zoom = newZoom
-                                            pan = if (newZoom <= 1.001f) Offset.Zero
-                                                else (newCenter - (newCenter - pan) * (newZoom / oldZoom.coerceAtLeast(0.001f)))
+                                            pan = calculatePinchPan(
+                                                currentPan = pan,
+                                                oldZoom = oldZoom,
+                                                newZoom = newZoom,
+                                                oldCentroid = oldCenter,
+                                                newCentroid = newCenter,
+                                                containerSize = size
+                                            )
                                         }
                                         pointers.forEach { it.consume() }
                                     } else if (zoom > 1.001f) {
@@ -1429,7 +1436,8 @@ private fun ReelsViewer(
                             scaleX = zoom,
                             scaleY = zoom,
                             translationX = pan.x,
-                            translationY = pan.y
+                            translationY = pan.y,
+                            transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
                         ),
                     contentScale = ContentScale.Fit
                 )
@@ -1578,8 +1586,14 @@ private fun VideoPage(
                                 val oldCenter = (first.previousPosition + second.previousPosition) / 2f
                                 val newCenter = (first.position + second.position) / 2f
                                 zoom = newZoom
-                                pan = if (newZoom <= 1.001f) Offset.Zero
-                                    else (newCenter - (newCenter - pan) * (newZoom / oldZoom.coerceAtLeast(0.001f)))
+                                pan = calculatePinchPan(
+                                    currentPan = pan,
+                                    oldZoom = oldZoom,
+                                    newZoom = newZoom,
+                                    oldCentroid = oldCenter,
+                                    newCentroid = newCenter,
+                                    containerSize = size
+                                )
                             }
                             pointers.forEach { it.consume() }
                             seekBarVisible = false
@@ -1653,7 +1667,8 @@ private fun VideoPage(
                 scaleX = zoom,
                 scaleY = zoom,
                 translationX = pan.x,
-                translationY = pan.y
+                translationY = pan.y,
+                transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
             )
         )
 
@@ -1701,6 +1716,21 @@ private fun VideoPage(
             }
         }
     }
+}
+
+private fun calculatePinchPan(
+    currentPan: Offset,
+    oldZoom: Float,
+    newZoom: Float,
+    oldCentroid: Offset,
+    newCentroid: Offset,
+    containerSize: IntSize
+): Offset {
+    if (newZoom <= 1.001f) return Offset.Zero
+    val center = Offset(containerSize.width / 2f, containerSize.height / 2f)
+    val scaleChange = newZoom / oldZoom.coerceAtLeast(0.001f)
+    // Keep the media point beneath the fingers stable as the pinch changes scale.
+    return newCentroid - center - (oldCentroid - center - currentPan) * scaleChange
 }
 
 private fun formatPlaybackTime(millis: Long): String {
