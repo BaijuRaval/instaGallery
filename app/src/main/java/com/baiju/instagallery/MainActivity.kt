@@ -6,6 +6,10 @@ import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -79,17 +83,20 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import coil.ImageLoader
 import coil.compose.AsyncImage
-import coil.decode.VideoFrameDecoder
-import coil.disk.DiskCache
 import coil.memory.MemoryCache
-import coil.request.CachePolicy
 import coil.request.ImageRequest
-import coil.request.videoFrameMillis
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import java.text.DateFormat
 import java.util.Date
+import java.security.MessageDigest
+import kotlin.math.min
 
 private data class GalleryMedia(
     val uri: Uri,
@@ -156,22 +163,16 @@ private fun GalleryApp() {
         ImageLoader.Builder(appContext)
             .memoryCache {
                 MemoryCache.Builder(appContext)
-                    .maxSizePercent(0.20)
+                    .maxSizePercent(0.22)
                     .build()
             }
-            .diskCache {
-                DiskCache.Builder()
-                    .directory(File(appContext.cacheDir, "instagallery_thumbnails"))
-                    .maxSizeBytes(128L * 1024L * 1024L)
-                    .build()
-            }
-            .components { add(VideoFrameDecoder.Factory()) }
             .crossfade(false)
             .build()
     }
     // These states live above the screen switch so opening media/settings doesn't reset scroll.
     val mediaGridState = rememberLazyGridState()
     val folderGridState = rememberLazyGridState()
+    var thumbnailRevision by remember { mutableIntStateOf(0) }
 
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         hasPermission = context.hasMediaPermission()
@@ -360,9 +361,25 @@ private fun GalleryApp() {
 
     LaunchedEffect(hasPermission) {
         if (hasPermission) {
-            // Querying thousands of media rows on the main thread delays first paint and can make the grid flash.
+            // Load media metadata on a worker so the grid can paint without waiting on main-thread I/O.
             val loadedMedia = withContext(Dispatchers.IO) { context.queryGalleryMedia() }
             media = loadedMedia
+        }
+    }
+    // Start persistent thumbnail generation right after MediaStore returns, not when a folder is opened.
+    // Existing cache files are checked/reused; only missing or changed media is decoded.
+    LaunchedEffect(media) {
+        if (media.isEmpty()) return@LaunchedEffect
+        val cacheSemaphore = Semaphore(2)
+        media.chunked(16).forEach { batch ->
+            val changed = coroutineScope {
+                batch.map { item ->
+                    async(Dispatchers.IO) {
+                        cacheSemaphore.withPermit { context.ensureThumbnailCache(item) }
+                    }
+                }.awaitAll()
+            }.any { it }
+            if (changed) thumbnailRevision++
         }
     }
     val visible = remember(media, selectedAlbum, hiddenFolders) {
@@ -528,6 +545,7 @@ private fun GalleryApp() {
                                         name = folder,
                                         items = folderItems,
                                         imageLoader = thumbnailLoader,
+                                        thumbnailRevision = thumbnailRevision,
                                         selected = selectedFolder == folder,
                                         onClick = {
                                             if (transferMode != null) {
@@ -633,7 +651,7 @@ private fun GalleryApp() {
                             verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             items(visible, key = { it.uri.toString() }) { item ->
-                                MediaThumbnail(item, item.uri in selected, thumbnailLoader)
+                                MediaThumbnail(item, item.uri in selected, thumbnailLoader, thumbnailRevision)
                             }
                         }
                     }
@@ -834,19 +852,114 @@ private fun rememberThumbnailRequest(context: Context, item: GalleryMedia): Imag
     thumbnailRequest(context, item)
 }
 
-private fun thumbnailRequest(context: Context, item: GalleryMedia): ImageRequest {
-    val frameTime = if (item.isVideo) item.thumbnailTimeMs else 0L
-    val cacheKey = "media-thumbnail:${item.uri}:${item.size}:${item.dateAdded}:$frameTime"
-    return ImageRequest.Builder(context)
-        .data(item.uri)
-        .memoryCacheKey(cacheKey)
-        .diskCacheKey(cacheKey)
-        .memoryCachePolicy(CachePolicy.ENABLED)
-        .diskCachePolicy(CachePolicy.ENABLED)
-        .apply { if (item.isVideo) videoFrameMillis(frameTime) }
-        .crossfade(false)
-        .build()
+private const val THUMBNAIL_MAX_SIZE = 512
+
+// filesDir (not cacheDir) keeps generated thumbnail JPEGs across app launches.
+private fun Context.thumbnailCacheFile(item: GalleryMedia): File {
+    val keyMaterial = "${item.uri}|${item.size}|${item.dateAdded}|${item.durationMs}|${item.thumbnailTimeMs}"
+    val hash = MessageDigest.getInstance("SHA-256").digest(keyMaterial.toByteArray())
+        .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+    return File(File(filesDir, "media_thumbnail_store"), "$hash.jpg")
 }
+
+private fun Context.ensureThumbnailCache(item: GalleryMedia): Boolean {
+    val target = thumbnailCacheFile(item)
+    if (target.isFile && target.length() > 0L) return false
+    val directory = target.parentFile ?: return false
+    if (!directory.exists() && !directory.mkdirs()) return false
+    var bitmap: Bitmap? = null
+    val temporary = File(directory, target.name + ".tmp")
+    return try {
+        bitmap = if (item.isVideo) createVideoThumbnail(item) else createImageThumbnail(item.uri)
+        if (bitmap == null) return false
+        val wrote = FileOutputStream(temporary).use { output ->
+            val ok = bitmap!!.compress(Bitmap.CompressFormat.JPEG, 84, output)
+            output.flush()
+            ok
+        }
+        if (!wrote) {
+            temporary.delete()
+            false
+        } else if (temporary.renameTo(target)) {
+            true
+        } else {
+            temporary.delete()
+            target.isFile && target.length() > 0L
+        }
+    } catch (_: Exception) {
+        temporary.delete()
+        false
+    } finally {
+        bitmap?.recycle()
+    }
+}
+
+private fun Context.createImageThumbnail(uri: Uri): Bitmap? {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        val source = ImageDecoder.createSource(contentResolver, uri)
+        return ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+            val original = info.size
+            val scale = min(1f, min(THUMBNAIL_MAX_SIZE.toFloat() / original.width, THUMBNAIL_MAX_SIZE.toFloat() / original.height))
+            decoder.setTargetSize(
+                (original.width * scale).toInt().coerceAtLeast(1),
+                (original.height * scale).toInt().coerceAtLeast(1)
+            )
+            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+        }
+    }
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return null
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+    var sample = 1
+    while (bounds.outWidth / (sample * 2) >= THUMBNAIL_MAX_SIZE &&
+        bounds.outHeight / (sample * 2) >= THUMBNAIL_MAX_SIZE) sample *= 2
+    val options = BitmapFactory.Options().apply { inSampleSize = sample; inPreferredConfig = Bitmap.Config.RGB_565 }
+    return contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+}
+
+private fun Context.createVideoThumbnail(item: GalleryMedia): Bitmap? {
+    val retriever = MediaMetadataRetriever()
+    return try {
+        retriever.setDataSource(this, item.uri)
+        val frameTimeUs = item.thumbnailTimeMs * 1_000L
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            retriever.getScaledFrameAtTime(
+                frameTimeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
+                THUMBNAIL_MAX_SIZE, THUMBNAIL_MAX_SIZE
+            )
+        } else {
+            retriever.getFrameAtTime(frameTimeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)?.let { scaleThumbnail(it) }
+        }
+    } finally {
+        retriever.release()
+    }
+}
+
+private fun scaleThumbnail(bitmap: Bitmap): Bitmap {
+    val scale = min(1f, min(THUMBNAIL_MAX_SIZE.toFloat() / bitmap.width, THUMBNAIL_MAX_SIZE.toFloat() / bitmap.height))
+    if (scale >= 1f) return bitmap
+    val scaled = Bitmap.createScaledBitmap(
+        bitmap, (bitmap.width * scale).toInt().coerceAtLeast(1),
+        (bitmap.height * scale).toInt().coerceAtLeast(1), true
+    )
+    if (scaled !== bitmap) bitmap.recycle()
+    return scaled
+}
+
+@Composable
+private fun rememberThumbnailRequest(context: Context, item: GalleryMedia, cacheRevision: Int): ImageRequest? =
+    remember(item.uri, item.size, item.dateAdded, item.durationMs, item.thumbnailTimeMs, cacheRevision) {
+        val file = context.thumbnailCacheFile(item)
+        if (file.isFile && file.length() > 0L) {
+            val key = file.nameWithoutExtension
+            ImageRequest.Builder(context)
+                .data(file)
+                .memoryCacheKey(key)
+                .diskCacheKey(key)
+                .crossfade(false)
+                .build()
+        } else null
+    }
 
 private fun Context.hasMediaPermission(): Boolean {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
@@ -1006,13 +1119,14 @@ private fun FolderTile(
     name: String,
     items: List<GalleryMedia>,
     imageLoader: ImageLoader,
+    thumbnailRevision: Int,
     selected: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
     val context = LocalContext.current
     val cover = items.firstOrNull()
-    val coverRequest = if (cover != null) rememberThumbnailRequest(context, cover) else null
+    val coverRequest = if (cover != null) rememberThumbnailRequest(context, cover, thumbnailRevision) else null
     Column(
         Modifier.fillMaxWidth()
             .background(if (selected) Color(0xFF503040) else Color(0xFF191919), MaterialTheme.shapes.medium)
@@ -1043,9 +1157,9 @@ private fun FolderTile(
 }
 
 @Composable
-private fun MediaThumbnail(item: GalleryMedia, selected: Boolean, imageLoader: ImageLoader) {
+private fun MediaThumbnail(item: GalleryMedia, selected: Boolean, imageLoader: ImageLoader, thumbnailRevision: Int) {
     val context = LocalContext.current
-    val request = rememberThumbnailRequest(context, item)
+    val request = rememberThumbnailRequest(context, item, thumbnailRevision)
     Box(Modifier.aspectRatio(0.78f).background(if (selected) Color(0xFF503040) else Color.DarkGray)) {
         AsyncImage(model = request,
             imageLoader = imageLoader, contentDescription = item.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
@@ -1071,7 +1185,7 @@ private fun ReelsViewer(items: List<GalleryMedia>, startIndex: Int, imageLoader:
                     scope.launch { pagerState.animateScrollToPage(if (pagerState.currentPage < items.lastIndex) pagerState.currentPage + 1 else 0) }
                 }, onTogglePlay = { playing = !playing })
             } else {
-                AsyncImage(model = rememberThumbnailRequest(LocalContext.current, item), imageLoader = imageLoader, contentDescription = item.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                AsyncImage(model = ImageRequest.Builder(LocalContext.current).data(item.uri).crossfade(false).build(), imageLoader = imageLoader, contentDescription = item.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
             }
         }
     }
