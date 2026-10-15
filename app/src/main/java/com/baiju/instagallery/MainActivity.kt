@@ -1458,7 +1458,7 @@ private fun ReelsViewer(
                                         }
                                     }
                                 }
-                                onPagerScrollEnabledChanged(zoom <= 1.001f)
+                                pagerScrollEnabled = zoom <= 1.001f
                             }
                         }
                         .graphicsLayer(
