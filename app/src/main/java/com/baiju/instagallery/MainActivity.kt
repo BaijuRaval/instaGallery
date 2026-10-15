@@ -19,6 +19,11 @@ import android.view.LayoutInflater
 import android.media.MediaScannerConnection
 import java.io.File
 import java.io.FileOutputStream
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -37,6 +42,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.layout.*
@@ -160,6 +166,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 private fun GalleryApp() {
     val context = LocalContext.current
@@ -196,6 +203,7 @@ private fun GalleryApp() {
     var folderRenameText by remember { mutableStateOf("") }
     var infoItem by remember { mutableStateOf<GalleryMedia?>(null) }
     var renameItem by remember { mutableStateOf<GalleryMedia?>(null) }
+    var renameMultipleItems by remember { mutableStateOf<List<GalleryMedia>>(emptyList()) }
     var renameText by remember { mutableStateOf("") }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var settingsPage by remember { mutableStateOf<String?>(null) }
@@ -223,6 +231,9 @@ private fun GalleryApp() {
     // These states live above the screen switch so opening media/settings doesn't reset scroll.
     val mediaGridState = rememberLazyGridState()
     val folderGridState = rememberLazyGridState()
+    var mediaGridColumns by remember { mutableIntStateOf(3) }
+    var folderGridColumns by remember { mutableIntStateOf(2) }
+    var isRefreshing by remember { mutableStateOf(false) }
     var thumbnailRevision by remember { mutableIntStateOf(0) }
 
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
@@ -251,9 +262,15 @@ private fun GalleryApp() {
         permissionLauncher.launch(permissions)
     }
     fun refresh() {
+        if (isRefreshing) return
         appScope.launch {
-            val refreshed = withContext(Dispatchers.IO) { context.queryGalleryMedia() }
-            media = refreshed
+            isRefreshing = true
+            try {
+                val refreshed = withContext(Dispatchers.IO) { context.queryGalleryMedia() }
+                media = refreshed
+            } finally {
+                isRefreshing = false
+            }
         }
     }
     fun setFolderHidden(folder: String, hidden: Boolean) {
@@ -495,7 +512,7 @@ private fun GalleryApp() {
         }
     }
     val hasInnerScreen = viewerStartUri != null || actionMenu || manageMediaInfoOpen || albumMenu ||
-        infoItem != null || renameItem != null || statusMessage != null || transferMode != null ||
+        infoItem != null || renameItem != null || renameMultipleItems.isNotEmpty() || statusMessage != null || transferMode != null ||
         selected.isNotEmpty() || selectedFolder != null || settingsPage != null || folderRemoveTarget != null ||
         (tab == "Folders" && selectedAlbum != "All media") || tab != "Reel"
     BackHandler(enabled = hasInnerScreen) {
@@ -514,6 +531,7 @@ private fun GalleryApp() {
             albumMenu -> albumMenu = false
             infoItem != null -> infoItem = null
             renameItem != null -> renameItem = null
+            renameMultipleItems.isNotEmpty() -> renameMultipleItems = emptyList()
             statusMessage != null -> statusMessage = null
             selected.isNotEmpty() -> selected = emptySet()
             selectedFolder != null -> selectedFolder = null
@@ -523,9 +541,14 @@ private fun GalleryApp() {
     }
 
     MaterialTheme(colorScheme = darkColorScheme(background = Color(0xFF101010), surface = Color(0xFF191919), primary = Color(0xFFFF4D7D))) {
-        if (settingsPage != null) {
+        AnimatedContent(
+            targetState = settingsPage,
+            transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(160)) },
+            label = "settingsTransition"
+        ) { targetSettingsPage ->
+        if (targetSettingsPage != null) {
             SettingsScreen(
-                page = settingsPage!!,
+                page = targetSettingsPage,
                 folderNames = media.map { it.album }.distinct().sorted(),
                 folderCounts = media.groupingBy { it.album }.eachCount(),
                 hiddenFolders = hiddenFolders,
@@ -550,8 +573,13 @@ private fun GalleryApp() {
             )
         } else {
         val viewerStart = viewerStartUri
-        if (viewerStart != null && visible.isNotEmpty()) {
-            val startIndex = visible.indexOfFirst { it.uri == viewerStart }.coerceAtLeast(0)
+        AnimatedContent(
+            targetState = viewerStart.takeIf { visible.isNotEmpty() },
+            transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(180)) },
+            label = "mediaViewerTransition"
+        ) { animatedViewerStart ->
+        if (animatedViewerStart != null && visible.isNotEmpty()) {
+            val startIndex = visible.indexOfFirst { it.uri == animatedViewerStart }.coerceAtLeast(0)
             ReelsViewer(
                 items = visible,
                 startIndex = startIndex,
@@ -571,7 +599,7 @@ private fun GalleryApp() {
                 }
             )
         } else {
-            Column(Modifier.fillMaxSize().background(Color(0xFF101010)).statusBarsPadding()) {
+            Column(Modifier.fillMaxSize().background(Color(0xFF101010)).statusBarsPadding().animateContentSize()) {
                 if (selected.isNotEmpty()) {
                     val allVisibleSelected = visible.isNotEmpty() && visible.all { it.uri in selected }
                     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -632,9 +660,27 @@ private fun GalleryApp() {
                         if (folders.isEmpty()) {
                             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { Text("No folders found", color = Color.LightGray) }
                         } else {
-                            LazyVerticalGrid(state = folderGridState, columns = GridCells.Fixed(2), modifier = Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            PullToRefreshBox(
+                                isRefreshing = isRefreshing,
+                                onRefresh = { refresh() },
+                                modifier = Modifier.weight(1f).fillMaxWidth()
+                            ) {
+                            LazyVerticalGrid(state = folderGridState, columns = GridCells.Fixed(folderGridColumns), modifier = Modifier.fillMaxSize().animateContentSize().pointerInput(Unit) {
+                                var accumulatedZoom = 1f
+                                detectTransformGestures { _, _, zoom, _ ->
+                                    accumulatedZoom *= zoom
+                                    if (accumulatedZoom > 1.16f) {
+                                        folderGridColumns = (folderGridColumns - 1).coerceAtLeast(1)
+                                        accumulatedZoom = 1f
+                                    } else if (accumulatedZoom < 0.86f) {
+                                        folderGridColumns = (folderGridColumns + 1).coerceAtMost(4)
+                                        accumulatedZoom = 1f
+                                    }
+                                }
+                            }, contentPadding = PaddingValues(6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 items(folders.keys.toList(), key = { it }) { folder ->
                                     val folderItems = folders[folder].orEmpty()
+                                    Box(Modifier.animateItemPlacement()) {
                                     FolderTile(
                                         name = folder,
                                         items = folderItems,
@@ -656,25 +702,49 @@ private fun GalleryApp() {
                                             actionMenu = false
                                         }
                                     )
+                                    }
                                 }
+                            }
                             }
                         }
                     }
                     else -> {
                         val gridState = mediaGridState
                         val latestSelection = rememberUpdatedState(selected)
+                        PullToRefreshBox(
+                            isRefreshing = isRefreshing,
+                            onRefresh = { refresh() },
+                            modifier = Modifier.weight(1f).fillMaxWidth()
+                        ) {
                         LazyVerticalGrid(
                             state = gridState,
-                            columns = GridCells.Fixed(3),
-                            modifier = Modifier.weight(1f).fillMaxWidth().pointerInput(visible, gridState) {
+                            columns = GridCells.Fixed(mediaGridColumns),
+                            modifier = Modifier.fillMaxSize().animateContentSize().pointerInput(Unit) {
+                                var accumulatedZoom = 1f
+                                detectTransformGestures { _, _, zoom, _ ->
+                                    accumulatedZoom *= zoom
+                                    if (accumulatedZoom > 1.16f) {
+                                        mediaGridColumns = (mediaGridColumns - 1).coerceAtLeast(2)
+                                        accumulatedZoom = 1f
+                                    } else if (accumulatedZoom < 0.86f) {
+                                        mediaGridColumns = (mediaGridColumns + 1).coerceAtMost(6)
+                                        accumulatedZoom = 1f
+                                    }
+                                }
+                            }.pointerInput(visible, gridState) {
                                 awaitEachGesture {
                                     val down = awaitFirstDown(requireUnconsumed = false)
                                     var currentPosition = down.position
                                     var releasedEarly = false
                                     var movedBeforeLongPress = false
+                                    var multiTouchDetected = false
                                     val completedBeforeLongPress = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
                                         while (true) {
                                             val event = awaitPointerEvent()
+                                            if (event.changes.count { it.pressed } >= 2) {
+                                                multiTouchDetected = true
+                                                return@withTimeoutOrNull true
+                                            }
                                             val change = event.changes.firstOrNull { it.id == down.id }
                                             if (change == null) {
                                                 releasedEarly = true
@@ -693,7 +763,7 @@ private fun GalleryApp() {
                                         true
                                     }
                                     if (completedBeforeLongPress != null) {
-                                        if (releasedEarly && !movedBeforeLongPress) {
+                                        if (!multiTouchDetected && releasedEarly && !movedBeforeLongPress) {
                                             val info = gridState.layoutInfo.visibleItemsInfo.firstOrNull { itemInfo ->
                                                 currentPosition.x >= itemInfo.offset.x && currentPosition.x < itemInfo.offset.x + itemInfo.size.width &&
                                                 currentPosition.y >= itemInfo.offset.y && currentPosition.y < itemInfo.offset.y + itemInfo.size.height
@@ -745,18 +815,32 @@ private fun GalleryApp() {
                             verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             items(visible, key = { it.uri.toString() }) { item ->
-                                MediaThumbnail(
-                                    item, item.uri in selected, thumbnailLoader, thumbnailRevision,
-                                    highlighted = item.uri == blinkMediaUri
-                                )
+                                Box(Modifier.animateItemPlacement()) {
+                                    MediaThumbnail(
+                                        item, item.uri in selected, thumbnailLoader, thumbnailRevision,
+                                        highlighted = item.uri == blinkMediaUri
+                                    )
+                                }
                             }
+                        }
                         }
                     }
                 }
                 if (selected.isNotEmpty()) {
                     Row(Modifier.fillMaxWidth().navigationBarsPadding().background(Color(0xFF171717)).padding(horizontal = 2.dp, vertical = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
                         BottomAction("Details", Icons.Default.Info, Modifier.weight(1f)) { media.firstOrNull { it.uri in selected }?.let { infoItem = it } }
-                        BottomAction("Rename", Icons.Default.Edit, Modifier.weight(1f)) { media.firstOrNull { it.uri in selected }?.let { renameItem = it; renameText = it.name } }
+                        BottomAction("Rename", Icons.Default.Edit, Modifier.weight(1f)) {
+                            val targets = media.filter { it.uri in selected }
+                            if (targets.size > 1) {
+                                renameItem = null
+                                renameMultipleItems = targets
+                                val firstName = targets.first().name
+                                renameText = if (firstName.lastIndexOf('.') > 0) firstName.substring(0, firstName.lastIndexOf('.')) else firstName
+                            } else {
+                                renameMultipleItems = emptyList()
+                                targets.firstOrNull()?.let { renameItem = it; renameText = it.name }
+                            }
+                        }
                         BottomAction("Copy", Icons.Default.ContentCopy, Modifier.weight(1f)) { beginTransfer("Copy") }
                         BottomAction("Move", Icons.Default.DriveFileMove, Modifier.weight(1f)) {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !MediaStore.canManageMedia(context)) manageMediaInfoOpen = true else beginTransfer("Move")
@@ -863,20 +947,69 @@ private fun GalleryApp() {
                     }
                 }, confirmButton = { TextButton(onClick = { infoItem = null }) { Text("Done") } })
             }
-            renameItem?.let { item ->
-                AlertDialog(onDismissRequest = { renameItem = null }, title = { Text("Rename") }, text = {
-                    OutlinedTextField(value = renameText, onValueChange = { renameText = it }, singleLine = true, label = { Text("File name") })
-                }, confirmButton = { TextButton(onClick = {
-                    val values = android.content.ContentValues().apply { put(MediaStore.MediaColumns.DISPLAY_NAME, renameText.trim()) }
-                    try {
-                        val changed = context.contentResolver.update(item.uri, values, null, null)
-                        statusMessage = if (changed > 0) "Renamed successfully" else "Rename not supported for this file"
-                        refresh()
-                    } catch (_: Exception) { statusMessage = "Rename was blocked by Android permissions" }
-                    renameItem = null
-                }) { Text("Save") } }, dismissButton = { TextButton(onClick = { renameItem = null }) { Text("Cancel") } })
+            if (renameMultipleItems.isNotEmpty()) {
+                val targets = renameMultipleItems
+                AlertDialog(
+                    onDismissRequest = { renameMultipleItems = emptyList() },
+                    title = { Text("Rename ${targets.size} files") },
+                    text = {
+                        OutlinedTextField(
+                            value = renameText,
+                            onValueChange = { renameText = it },
+                            singleLine = true,
+                            label = { Text("Base name (numbered suffixes added)") }
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            val baseName = renameText.trim().trimEnd(' ', '.')
+                            if (baseName.isBlank()) {
+                                statusMessage = "Enter a valid base name."
+                            } else {
+                                var renamed = 0
+                                targets.forEachIndexed { index, target ->
+                                    val dot = target.name.lastIndexOf('.')
+                                    val extension = if (dot > 0 && dot < target.name.lastIndex) target.name.substring(dot) else ""
+                                    val newName = "$baseName (${index + 1})$extension"
+                                    try {
+                                        val values = android.content.ContentValues().apply {
+                                            put(MediaStore.MediaColumns.DISPLAY_NAME, newName)
+                                        }
+                                        if (context.contentResolver.update(target.uri, values, null, null) > 0) renamed++
+                                    } catch (_: Exception) { }
+                                }
+                                statusMessage = if (renamed == targets.size) "Renamed all $renamed files." else "Renamed $renamed of ${targets.size} files; some could not be renamed."
+                                selected = emptySet()
+                                refresh()
+                            }
+                            renameMultipleItems = emptyList()
+                        }) { Text("Rename") }
+                    },
+                    dismissButton = { TextButton(onClick = { renameMultipleItems = emptyList() }) { Text("Cancel") } }
+                )
+            } else {
+                renameItem?.let { item ->
+                    AlertDialog(onDismissRequest = { renameItem = null }, title = { Text("Rename") }, text = {
+                        OutlinedTextField(value = renameText, onValueChange = { renameText = it }, singleLine = true, label = { Text("File name") })
+                    }, confirmButton = { TextButton(onClick = {
+                        val proposedName = renameText.trim()
+                        if (proposedName.isBlank()) {
+                            statusMessage = "Enter a valid file name."
+                        } else {
+                            val values = android.content.ContentValues().apply { put(MediaStore.MediaColumns.DISPLAY_NAME, proposedName) }
+                            try {
+                                val changed = context.contentResolver.update(item.uri, values, null, null)
+                                statusMessage = if (changed > 0) "Renamed successfully" else "Rename not supported for this file"
+                                refresh()
+                            } catch (_: Exception) { statusMessage = "Rename was blocked by Android permissions" }
+                        }
+                        renameItem = null
+                    }) { Text("Save") } }, dismissButton = { TextButton(onClick = { renameItem = null }) { Text("Cancel") } })
+                }
             }
             statusMessage?.let { msg -> AlertDialog(onDismissRequest = { statusMessage = null }, text = { Text(msg) }, confirmButton = { TextButton(onClick = { statusMessage = null }) { Text("OK") } }) }
+        }
+        }
         }
         }
     }
@@ -982,7 +1115,7 @@ private fun SettingsScreen(
                 )
                 PlaybackSettingRow(
                     title = "Media auto fit to screen",
-                    subtitle = "Double-tap to fill the screen; double-tap again to restore original fit",
+                    subtitle = "On: open each photo and video fitted to the screen. Double-tap always toggles fit and screen-fill.",
                     checked = mediaAutoFitToScreen,
                     onCheckedChange = onToggleMediaAutoFitToScreen
                 )
@@ -1001,7 +1134,7 @@ private fun PlaybackSettingRow(
     Surface(
         color = Color(0xFF191919),
         shape = MaterialTheme.shapes.large,
-        modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)
+        modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp).animateContentSize()
     ) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
@@ -1461,6 +1594,21 @@ private fun ReelsViewer(
                     imageAspectRatio, 0f, rotation
                 )
                 val latestScreenFillZoom by rememberUpdatedState(screenFillZoom)
+                var initialFitApplied by remember(item.uri) { mutableStateOf(false) }
+                LaunchedEffect(item.uri, mediaAutoFitToScreen, viewportSize, imageAspectRatio) {
+                    if (viewportSize.width > 0 && viewportSize.height > 0) {
+                        if (mediaAutoFitToScreen) {
+                            zoom = 1f
+                            pan = Offset.Zero
+                            screenFillActive = false
+                            initialFitApplied = true
+                        } else if (!initialFitApplied && imageAspectRatio > 0f) {
+                            zoom = latestScreenFillZoom
+                            screenFillActive = true
+                            initialFitApplied = true
+                        }
+                    }
+                }
                 AsyncImage(
                     model = imageRequest,
                     imageLoader = imageLoader,
@@ -1552,20 +1700,18 @@ private fun ReelsViewer(
                                 currentMediaZoomed = zoom > 1.001f || screenFillActive
                             }
                         }
-                        .pointerInput(item.uri, mediaAutoFitToScreen) {
+                        .pointerInput(item.uri) {
                             detectTapGestures(onDoubleTap = {
-                                if (mediaAutoFitToScreen) {
-                                    val target = if (screenFillActive) 1f else latestScreenFillZoom
-                                    screenFillActive = !screenFillActive
-                                    currentMediaZoomed = target > 1.001f
-                                    zoomAnimJob?.cancel()
-                                    zoomAnimJob = scope.launch {
-                                        val animator = Animatable(zoom)
-                                        animator.animateTo(
-                                            target.coerceIn(0.25f, 12f),
-                                            animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing)
-                                        ) { zoom = value }
-                                    }
+                                val target = if (screenFillActive) 1f else latestScreenFillZoom
+                                screenFillActive = !screenFillActive
+                                currentMediaZoomed = target > 1.001f
+                                zoomAnimJob?.cancel()
+                                zoomAnimJob = scope.launch {
+                                    val animator = Animatable(zoom)
+                                    animator.animateTo(
+                                        target.coerceIn(0.25f, 12f),
+                                        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing)
+                                    ) { zoom = value }
                                 }
                             })
                         }
@@ -1644,6 +1790,21 @@ private fun VideoPage(
         viewportSize.width, viewportSize.height, videoAspectRatio, 1f, rotation
     )
     val latestScreenFillZoom by rememberUpdatedState(screenFillZoom)
+    var initialFitApplied by remember(item.uri) { mutableStateOf(false) }
+    LaunchedEffect(active, mediaAutoFitToScreen, viewportSize, videoAspectRatio) {
+        if (active && viewportSize.width > 0 && viewportSize.height > 0) {
+            if (mediaAutoFitToScreen) {
+                zoom = 1f
+                pan = Offset.Zero
+                screenFillActive = false
+                initialFitApplied = true
+            } else if (!initialFitApplied && videoAspectRatio > 0f) {
+                zoom = latestScreenFillZoom
+                screenFillActive = true
+                initialFitApplied = true
+            }
+        }
+    }
     var seekBarVisible by remember(item.uri) { mutableStateOf(false) }
     var fastForwarding by remember(item.uri) { mutableStateOf(false) }
     var currentPositionMs by remember(item.uri) { mutableLongStateOf(initialPositionMs) }
@@ -1708,11 +1869,11 @@ private fun VideoPage(
 
     Box(
         Modifier.fillMaxSize().background(Color.Black)
-            .pointerInput(item.uri, mediaAutoFitToScreen) {
+            .pointerInput(item.uri) {
                 detectTapGestures(
                     onTap = { if (active) onTogglePlay() },
                     onDoubleTap = {
-                        if (active && mediaAutoFitToScreen) {
+                        if (active) {
                             val target = if (screenFillActive) 1f else latestScreenFillZoom
                             screenFillActive = !screenFillActive
                             onZoomChanged(target > 1.001f || screenFillActive)
