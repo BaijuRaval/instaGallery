@@ -1,6 +1,7 @@
 package com.baiju.instagallery
 
 import android.content.Context
+import android.content.Intent
 import android.database.Cursor
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
@@ -13,6 +14,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -65,14 +68,15 @@ private val supportedDocumentExtensions = setOf(
 internal fun DocumentsScreen(
     hasAccess: Boolean,
     onRequestAccess: () -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    initialViewMode: String = "all"
 ) {
     val context = LocalContext.current
     var documents by remember { mutableStateOf(emptyList<BrowserDocument>()) }
     var loading by remember { mutableStateOf(false) }
     var scanError by remember { mutableStateOf<String?>(null) }
     var scanRevision by remember { mutableIntStateOf(0) }
-    var viewMode by remember { mutableStateOf("all") }
+    var viewMode by remember { mutableStateOf(initialViewMode) }
     var currentFolder by remember { mutableStateOf("") }
     var openedDocument by remember { mutableStateOf<BrowserDocument?>(null) }
 
@@ -321,81 +325,188 @@ private fun normalizeDocumentPath(context: Context, rawPath: String): String {
 
 @Composable
 private fun BuiltInDocumentReader(document: BrowserDocument, onBack: () -> Unit) {
+    val context = LocalContext.current
+    val originalViewerExtensions = setOf(
+        "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "rtf", "html", "htm"
+    )
+    val requiresOriginalViewer = document.extension in originalViewerExtensions
+    var openError by remember(document.uri) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(document.uri) {
+        if (requiresOriginalViewer) {
+            val mime = when (document.extension) {
+                "doc" -> "application/msword"
+                "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                "xls" -> "application/vnd.ms-excel"
+                "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                "ppt" -> "application/vnd.ms-powerpoint"
+                "pptx" -> "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                "odt" -> "application/vnd.oasis.opendocument.text"
+                "ods" -> "application/vnd.oasis.opendocument.spreadsheet"
+                "odp" -> "application/vnd.oasis.opendocument.presentation"
+                "rtf" -> "application/rtf"
+                "html", "htm" -> "text/html"
+                else -> document.mimeType
+            }
+            val intent = Intent(Intent.ACTION_VIEW).setDataAndType(document.uri, mime)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            try {
+                if (context.packageManager.resolveActivity(intent, 0) == null) {
+                    openError = "No compatible app is installed to open this original document."
+                } else {
+                    context.startActivity(intent)
+                    onBack()
+                }
+            } catch (e: Exception) {
+                openError = "Could not open the original file. Install a compatible document viewer and try again."
+            }
+        }
+    }
+
     Column(Modifier.fillMaxSize().background(Color(0xFF101010)).statusBarsPadding().navigationBarsPadding()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back to documents", tint = Color.White) }
             Column(Modifier.weight(1f)) {
                 Text(document.name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp,
                     maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(document.extension.uppercase() + " reader", color = Color.LightGray, fontSize = 11.sp)
+                Text(
+                    if (requiresOriginalViewer) "Opening original file" else document.extension.uppercase() + " reader",
+                    color = Color.LightGray, fontSize = 11.sp
+                )
             }
         }
         Divider(color = Color(0xFF303030))
-        if (document.extension == "pdf") PdfDocumentReader(document.uri) else TextBasedDocumentReader(document)
+        when {
+            requiresOriginalViewer -> {
+                Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        if (openError == null) {
+                            CircularProgressIndicator(color = Color(0xFFFF4D7D))
+                            Spacer(Modifier.height(14.dp))
+                            Text("Opening with original formatting…", color = Color.White)
+                        } else {
+                            Text(openError.orEmpty(), color = Color.White)
+                            Spacer(Modifier.height(14.dp))
+                            TextButton(onClick = onBack) { Text("Back to documents") }
+                        }
+                    }
+                }
+            }
+            document.extension == "pdf" -> PdfDocumentReader(document.uri)
+            else -> TextBasedDocumentReader(document)
+        }
     }
 }
 
-private data class PdfRenderResult(val count: Int, val bitmap: Bitmap?, val error: String?)
+private data class PdfDocumentInfo(val pageCount: Int, val error: String?)
 
 @Composable
 private fun PdfDocumentReader(uri: Uri) {
     val context = LocalContext.current
-    var pageIndex by remember(uri) { mutableIntStateOf(0) }
     var pageCount by remember(uri) { mutableIntStateOf(0) }
-    var bitmap by remember(uri) { mutableStateOf<Bitmap?>(null) }
     var loading by remember(uri) { mutableStateOf(true) }
     var error by remember(uri) { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(uri, pageIndex) {
+    LaunchedEffect(uri) {
         loading = true
-        error = null
         val result = withContext(Dispatchers.IO) {
             try {
                 val fd = context.contentResolver.openFileDescriptor(uri, "r")
                     ?: throw IllegalStateException("Could not open this PDF.")
                 fd.use { descriptor ->
                     PdfRenderer(descriptor).use { renderer ->
-                        val count = renderer.pageCount
-                        if (count <= 0) throw IllegalStateException("This PDF has no readable pages.")
-                        renderer.openPage(pageIndex.coerceIn(0, count - 1)).use { page ->
-                            val scale = minOf(1.5f, 1500f / maxOf(page.width, page.height).toFloat())
-                            val image = Bitmap.createBitmap((page.width * scale).toInt().coerceAtLeast(1),
-                                (page.height * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
-                            page.render(image, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                            PdfRenderResult(count, image, null)
-                        }
+                        if (renderer.pageCount <= 0) throw IllegalStateException("This PDF has no readable pages.")
+                        PdfDocumentInfo(renderer.pageCount, null)
                     }
                 }
-            } catch (e: Exception) { PdfRenderResult(0, null, e.message ?: "Could not render this PDF.") }
+            } catch (e: Exception) {
+                PdfDocumentInfo(0, e.message ?: "Could not open this PDF.")
+            }
         }
-        pageCount = result.count
-        bitmap = result.bitmap
+        pageCount = result.pageCount
         error = result.error
         loading = false
     }
-    Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            TextButton(enabled = pageIndex > 0 && !loading, onClick = { pageIndex-- }) { Text("Previous") }
-            Text(if (pageCount > 0) "Page " + (pageIndex + 1) + " of " + pageCount else "PDF",
-                color = Color.White, fontSize = 13.sp)
-            TextButton(enabled = pageCount > 0 && pageIndex < pageCount - 1 && !loading, onClick = { pageIndex++ }) {
-                Text("Next")
+
+    when {
+        loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = Color(0xFFFF4D7D))
+        }
+        error != null -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+            Text(error.orEmpty(), color = Color.White)
+        }
+        else -> Column(Modifier.fillMaxSize()) {
+            Text(
+                "$pageCount pages · scroll vertically to read",
+                color = Color.LightGray,
+                fontSize = 12.sp,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)
+            )
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 16.dp)
+            ) {
+                items((0 until pageCount).toList(), key = { it }) { pageIndex ->
+                    PdfPageContent(uri = uri, pageIndex = pageIndex)
+                }
             }
         }
-        when {
-            loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = Color(0xFFFF4D7D))
-            }
-            error != null -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-                Text(error.orEmpty(), color = Color.White)
-            }
-            bitmap != null -> Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(8.dp),
-                contentAlignment = Alignment.TopCenter) {
-                Image(bitmap = bitmap!!.asImageBitmap(), contentDescription = "PDF page " + (pageIndex + 1),
-                    modifier = Modifier.fillMaxWidth())
+    }
+}
+
+@Composable
+private fun PdfPageContent(uri: Uri, pageIndex: Int) {
+    val context = LocalContext.current
+    var bitmap by remember(uri, pageIndex) { mutableStateOf<Bitmap?>(null) }
+    var error by remember(uri, pageIndex) { mutableStateOf<String?>(null) }
+    var loading by remember(uri, pageIndex) { mutableStateOf(true) }
+
+    LaunchedEffect(uri, pageIndex) {
+        loading = true
+        val result = withContext(Dispatchers.IO) {
+            try {
+                val fd = context.contentResolver.openFileDescriptor(uri, "r")
+                    ?: throw IllegalStateException("Could not open PDF page.")
+                fd.use { descriptor ->
+                    PdfRenderer(descriptor).use { renderer ->
+                        renderer.openPage(pageIndex).use { page ->
+                            // Render the original page, retaining its embedded colors and graphics.
+                            val scale = minOf(2.0f, 1800f / maxOf(page.width, page.height).toFloat())
+                            val image = Bitmap.createBitmap(
+                                (page.width * scale).toInt().coerceAtLeast(1),
+                                (page.height * scale).toInt().coerceAtLeast(1),
+                                Bitmap.Config.ARGB_8888
+                            )
+                            page.render(image, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                            image
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                error = e.message ?: "Could not render page ${pageIndex + 1}."
+                null
             }
         }
+        bitmap = result
+        loading = false
+    }
+
+    when {
+        bitmap != null -> Image(
+            bitmap = bitmap!!.asImageBitmap(),
+            contentDescription = "PDF page ${pageIndex + 1}",
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)
+                .background(Color.White)
+        )
+        loading -> Box(
+            Modifier.fillMaxWidth().height(180.dp),
+            contentAlignment = Alignment.Center
+        ) { CircularProgressIndicator(color = Color(0xFFFF4D7D)) }
+        error != null -> Text(
+            error.orEmpty(),
+            color = Color.White,
+            modifier = Modifier.fillMaxWidth().padding(18.dp)
+        )
     }
 }
 
