@@ -123,8 +123,15 @@ private fun GalleryApp() {
     }
 
     fun requestPermissions() {
-        val permissions = if (Build.VERSION.SDK_INT >= 33) arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
-        else arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        val permissions = when {
+            Build.VERSION.SDK_INT >= 34 -> arrayOf(
+                Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VIDEO,
+                Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+            )
+            Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
+            else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
         permissionLauncher.launch(permissions)
     }
     fun refresh() { media = context.queryGalleryMedia() }
@@ -339,7 +346,15 @@ private fun GalleryApp() {
 }
 
 private fun Context.hasMediaPermission(): Boolean {
-    val permissions = if (Build.VERSION.SDK_INT >= 33) listOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO) else listOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+    val permissions = when {
+        Build.VERSION.SDK_INT >= 34 -> listOf(
+            Manifest.permission.READ_MEDIA_IMAGES,
+            Manifest.permission.READ_MEDIA_VIDEO,
+            Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+        )
+        Build.VERSION.SDK_INT >= 33 -> listOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
+        else -> listOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+    }
     return permissions.any { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
 }
 
