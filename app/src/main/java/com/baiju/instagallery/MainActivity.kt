@@ -207,6 +207,10 @@ private fun GalleryApp() {
     var renameText by remember { mutableStateOf("") }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var settingsPage by remember { mutableStateOf<String?>(null) }
+    var mainMenuOpen by remember { mutableStateOf(false) }
+    var pendingRenameActions by remember { mutableStateOf<List<Pair<GalleryMedia, String>>>(emptyList()) }
+    var pendingRenameAlreadyDone by remember { mutableIntStateOf(0) }
+    var pendingRenameTotalCount by remember { mutableIntStateOf(0) }
     var folderRemoveTarget by remember { mutableStateOf<String?>(null) }
     var manageMediaInfoOpen by remember { mutableStateOf(false) }
     var albumMenu by remember { mutableStateOf(false) }
