@@ -14,6 +14,7 @@ import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -29,6 +30,8 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
@@ -98,6 +101,11 @@ internal fun DocumentsScreen(
     var viewMode by remember { mutableStateOf(initialViewMode) }
     var currentFolder by remember { mutableStateOf("") }
     var openedDocument by remember { mutableStateOf<BrowserDocument?>(null) }
+
+    LaunchedEffect(initialViewMode) {
+        viewMode = initialViewMode
+        currentFolder = ""
+    }
 
     LaunchedEffect(openedDocument) {
         onDocumentOpenChanged(openedDocument != null)
@@ -501,6 +509,8 @@ private fun PdfDocumentReader(uri: Uri) {
     var loading by remember(uri) { mutableStateOf(true) }
     var error by remember(uri) { mutableStateOf<String?>(null) }
     var zoom by remember(uri) { mutableFloatStateOf(1f) }
+    val latestZoom = rememberUpdatedState(zoom)
+    val latestZoomChange = rememberUpdatedState<(Float) -> Unit>({ newZoom -> zoom = newZoom })
 
     LaunchedEffect(uri) {
         loading = true
@@ -530,10 +540,39 @@ private fun PdfDocumentReader(uri: Uri) {
         error != null -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
             Text(error.orEmpty(), color = Color.White)
         }
-        else -> Box(Modifier.fillMaxSize()) {
+        else -> Box(
+            Modifier.fillMaxSize().pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    var previousDistance = 0f
+                    var gestureZoom = latestZoom.value
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val pointers = event.changes.filter { it.pressed }
+                        if (pointers.isEmpty()) break
+                        if (pointers.size >= 2) {
+                            val first = pointers[0]
+                            val second = pointers[1]
+                            val distance = (first.position - second.position).getDistance()
+                            if (previousDistance > 0.5f && distance > 0.5f) {
+                                val ratio = distance / previousDistance
+                                if (kotlin.math.abs(ratio - 1f) > 0.005f) {
+                                    gestureZoom = (gestureZoom * ratio).coerceIn(0.5f, 4f)
+                                    latestZoomChange.value(gestureZoom)
+                                }
+                            }
+                            previousDistance = distance
+                            pointers.forEach { it.consume() }
+                        } else {
+                            previousDistance = 0f
+                        }
+                    }
+                }
+            }
+        ) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 20.dp)
+                contentPadding = PaddingValues(bottom = 92.dp)
             ) {
                 items((0 until pageCount).toList(), key = { it }) { pageIndex ->
                     PdfPageContent(
@@ -547,7 +586,7 @@ private fun PdfDocumentReader(uri: Uri) {
             DocumentZoomControls(
                 zoom = zoom,
                 onZoomChange = { zoom = it.coerceIn(0.5f, 4f) },
-                modifier = Modifier.align(Alignment.BottomEnd).padding(14.dp)
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 18.dp)
             )
         }
     }
@@ -628,28 +667,34 @@ private fun DocumentZoomControls(
 ) {
     Surface(
         modifier = modifier,
-        color = Color(0xE8202020),
+        color = Color(0xF5222222),
         shape = MaterialTheme.shapes.extraLarge,
-        shadowElevation = 6.dp
+        border = BorderStroke(1.dp, Color(0xFFFF4D7D)),
+        shadowElevation = 10.dp
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            TextButton(
+            IconButton(
                 onClick = { onZoomChange((zoom / 1.2f).coerceAtLeast(0.5f)) },
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-            ) { Text("−", color = Color.White, fontSize = 24.sp) }
+                modifier = Modifier.size(48.dp)
+            ) {
+                Icon(Icons.Default.Remove, contentDescription = "Zoom out", tint = Color.White, modifier = Modifier.size(28.dp))
+            }
             Text(
                 "${(zoom * 100).toInt()}%",
                 color = Color.White,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(horizontal = 4.dp)
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(horizontal = 8.dp)
             )
-            TextButton(
+            IconButton(
                 onClick = { onZoomChange((zoom * 1.2f).coerceAtMost(4f)) },
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-            ) { Text("+", color = Color.White, fontSize = 24.sp) }
+                modifier = Modifier.size(48.dp)
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "Zoom in", tint = Color.White, modifier = Modifier.size(28.dp))
+            }
         }
     }
 }
