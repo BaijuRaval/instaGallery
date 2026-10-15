@@ -1457,6 +1457,7 @@ private fun VideoPage(
             prepare()
         }
     }
+    val exoPlayer = player
     var zoom by remember(item.uri) { mutableStateOf(1f) }
     var pan by remember(item.uri) { mutableStateOf(Offset.Zero) }
     var seekBarVisible by remember(item.uri) { mutableStateOf(false) }
@@ -1604,11 +1605,11 @@ private fun VideoPage(
                 factory = { ctx ->
                     PlayerView(ctx).apply {
                         useController = false
-                        player = this@VideoPage.player
+                        player = exoPlayer
                         setShutterBackgroundColor(android.graphics.Color.BLACK)
                     }
                 },
-                update = { it.player = player },
+                update = { it.player = exoPlayer },
                 modifier = Modifier.fillMaxSize()
             )
         }
