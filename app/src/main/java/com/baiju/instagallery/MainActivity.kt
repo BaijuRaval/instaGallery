@@ -67,6 +67,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -1396,7 +1397,7 @@ private fun ReelsViewer(
                             awaitEachGesture {
                                 awaitFirstDown(requireUnconsumed = false)
                                 while (true) {
-                                    val event = awaitPointerEvent()
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
                                     val pointers = event.changes.filter { it.pressed }
                                     if (pointers.isEmpty()) break
                                     if (pointers.size >= 2) {
@@ -1543,9 +1544,9 @@ private fun VideoPage(
 
                     while (!finished) {
                         val event = if (!didMove && !longPressTriggered && !multiTouch) {
-                            withTimeoutOrNull(450L) { awaitPointerEvent() }
+                            withTimeoutOrNull(450L) { awaitPointerEvent(PointerEventPass.Initial) }
                         } else {
-                            awaitPointerEvent()
+                            awaitPointerEvent(PointerEventPass.Initial)
                         }
 
                         if (event == null) {
@@ -1641,12 +1642,12 @@ private fun VideoPage(
                     useController = false
                     this.player = exoPlayer
                     setShutterBackgroundColor(android.graphics.Color.BLACK)
-                    setOnTouchListener { _, _ -> true }
+                    isClickable = false
+                    isFocusable = false
                 }
             },
             update = {
                 it.player = exoPlayer
-                it.setOnTouchListener { _, _ -> true }
             },
             modifier = Modifier.fillMaxSize().graphicsLayer(
                 scaleX = zoom,
