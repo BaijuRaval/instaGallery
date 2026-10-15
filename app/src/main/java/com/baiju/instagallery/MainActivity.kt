@@ -350,6 +350,12 @@ private fun GalleryApp() {
 }
 
 private fun Context.hasMediaPermission(): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+        val readGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+        val writeGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+        return readGranted && writeGranted
+    }
     val permissions = when {
         Build.VERSION.SDK_INT >= 34 -> listOf(
             Manifest.permission.READ_MEDIA_IMAGES,
@@ -357,8 +363,7 @@ private fun Context.hasMediaPermission(): Boolean {
             Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
         )
         Build.VERSION.SDK_INT >= 33 -> listOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.M -> listOf(Manifest.permission.READ_EXTERNAL_STORAGE)
-        else -> emptyList()
+        else -> listOf(Manifest.permission.READ_EXTERNAL_STORAGE)
     }
     return permissions.any { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
 }
