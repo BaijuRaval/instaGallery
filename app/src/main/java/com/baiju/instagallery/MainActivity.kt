@@ -1666,7 +1666,7 @@ private fun VideoPage(
         AndroidView(
             factory = { ctx ->
                 (LayoutInflater.from(ctx).inflate(R.layout.player_view_texture, null, false) as PlayerView).apply {
-                    player = exoPlayer
+                    this.player = exoPlayer
                     setShutterBackgroundColor(android.graphics.Color.BLACK)
                     isClickable = false
                     isFocusable = false
