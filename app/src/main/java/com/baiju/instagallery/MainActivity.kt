@@ -1435,10 +1435,19 @@ private fun ReelsViewer(
                 var pan by remember(item.uri) { mutableStateOf(Offset.Zero) }
                 var rotation by remember(item.uri) { mutableFloatStateOf(0f) }
                 var rotationSnapJob by remember(item.uri) { mutableStateOf<Job?>(null) }
+                var zoomAnimJob by remember(item.uri) { mutableStateOf<Job?>(null) }
+                var screenFillActive by remember(item.uri) { mutableStateOf(false) }
                 var viewportSize by remember(item.uri) { mutableStateOf(IntSize.Zero) }
-                AsyncImage(
-                    model = ImageRequest.Builder(context).data(item.uri).crossfade(false).build(),
-                    imageLoader = imageLoader,
+                val imageRequest = remember(item.uri) {
+                    ImageRequest.Builder(context).data(item.uri).crossfade(false).build()
+                }
+                val imagePainter = rememberAsyncImagePainter(model = imageRequest, imageLoader = imageLoader)
+                val screenFillZoom = calculateScreenFillZoom(
+                    viewportSize.width, viewportSize.height,
+                    imagePainter.intrinsicSize.width, imagePainter.intrinsicSize.height, rotation
+                )
+                Image(
+                    painter = imagePainter,
                     contentDescription = item.name,
                     modifier = Modifier.fillMaxSize()
                         .onSizeChanged { viewportSize = it }
@@ -1447,6 +1456,8 @@ private fun ReelsViewer(
                                 awaitFirstDown(requireUnconsumed = false)
                                 rotationSnapJob?.cancel()
                                 rotationSnapJob = null
+                                zoomAnimJob?.cancel()
+                                zoomAnimJob = null
                                 var usedMultiTouch = false
                                 while (true) {
                                     val event = awaitPointerEvent(PointerEventPass.Initial)
@@ -1473,6 +1484,7 @@ private fun ReelsViewer(
                                     }
                                     if (pointers.size >= 2) {
                                         usedMultiTouch = true
+                                        screenFillActive = false
                                         currentMediaZoomed = true
                                         val first = pointers[0]
                                         val second = pointers[1]
@@ -1513,14 +1525,33 @@ private fun ReelsViewer(
                                         }
                                     } else if (zoom > 1.001f) {
                                         val change = pointers.first()
-                                        if (change.position != change.previousPosition) {
-                                            pan += change.position - change.previousPosition
+                                        val delta = change.position - change.previousPosition
+                                        // Vertical swipes stay available to the pager at every zoom/rotation.
+                                        if (delta != Offset.Zero && kotlin.math.abs(delta.x) > kotlin.math.abs(delta.y)) {
+                                            pan += Offset(delta.x, 0f)
                                             change.consume()
                                         }
                                     }
                                 }
-                                currentMediaZoomed = zoom > 1.001f
+                                currentMediaZoomed = zoom > 1.001f || screenFillActive
                             }
+                        }
+                        .pointerInput(item.uri, mediaAutoFitToScreen, screenFillActive, screenFillZoom) {
+                            detectTapGestures(onDoubleTap = {
+                                if (mediaAutoFitToScreen) {
+                                    val target = if (screenFillActive) 1f else screenFillZoom
+                                    screenFillActive = !screenFillActive
+                                    currentMediaZoomed = target > 1.001f
+                                    zoomAnimJob?.cancel()
+                                    zoomAnimJob = scope.launch {
+                                        val animator = Animatable(zoom)
+                                        animator.animateTo(
+                                            target.coerceIn(0.25f, 12f),
+                                            animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing)
+                                        ) { zoom = value }
+                                    }
+                                }
+                            })
                         }
                         .graphicsLayer {
                             val rotationFit = calculateRotationFitScale(viewportSize.width, viewportSize.height, rotation)
