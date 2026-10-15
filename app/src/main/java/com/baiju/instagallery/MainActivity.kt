@@ -173,18 +173,38 @@ private fun GalleryApp() {
         }
         val copied = results.count { it.success }
         val firstError = results.firstOrNull { !it.success }?.error
-        statusMessage = when {
-            copied == 0 -> "Couldn't copy to $folder. $firstError"
-            transferMode == "Copy" && copied == targets.size -> "Done! Copied $copied item(s) to $folder."
-            transferMode == "Copy" -> "Copied $copied of ${targets.size} item(s) to $folder. One file failed: $firstError"
-            copied == targets.size -> "Copied to $folder. Original files are still in place because Android requires a separate confirmation before deleting them."
-            else -> "Copied $copied of ${targets.size} item(s) to $folder. Originals were kept. Error: $firstError"
-        }
+        val wasMove = transferMode == "Move"
         transferMode = null
         transferItems = emptyList()
         tab = transferReturnTab
         selectedAlbum = transferReturnAlbum
         refresh()
+
+        when {
+            copied == 0 -> statusMessage = "Couldn't copy to $folder. $firstError"
+            !wasMove && copied == targets.size -> statusMessage = "Done! Copied $copied item(s) to $folder."
+            !wasMove -> statusMessage = "Copied $copied of ${targets.size} item(s) to $folder. One file failed: $firstError"
+            copied != targets.size -> statusMessage = "Copied $copied of ${targets.size} item(s) to $folder. Originals were kept because not all files copied. Error: $firstError"
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
+                pendingTransferMessage = "Moved $copied item(s) to $folder."
+                try {
+                    val request = MediaStore.createDeleteRequest(context.contentResolver, targets.map { it.uri })
+                    deleteLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
+                } catch (e: Exception) {
+                    pendingTransferMessage = null
+                    statusMessage = "Files copied to $folder, but Android couldn't request permission to delete originals. Originals were kept."
+                }
+            }
+            else -> {
+                try {
+                    val deleted = targets.all { context.contentResolver.delete(it.uri, null, null) > 0 }
+                    refresh()
+                    statusMessage = if (deleted) "Moved $copied item(s) to $folder." else "Files copied to $folder, but some originals couldn't be deleted. Check your Gallery."
+                } catch (_: SecurityException) {
+                    statusMessage = "Files copied to $folder, but Android blocked deletion. Originals were kept."
+                }
+            }
+        }
     }
     fun deleteMedia(items: List<GalleryMedia>) {
         try {
