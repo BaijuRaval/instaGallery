@@ -153,7 +153,23 @@ private fun GalleryApp() {
             controller.show(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
         }
     }
-    BackHandler(enabled = viewerStartUri != null) { viewerStartUri = null; selected = emptySet() }
+    val hasInnerScreen = viewerStartUri != null || actionMenu || settingsOpen || albumMenu ||
+        infoItem != null || renameItem != null || statusMessage != null ||
+        selected.isNotEmpty() || (tab == "Folders" && selectedAlbum != "All media") || tab != "Reel"
+    BackHandler(enabled = hasInnerScreen) {
+        when {
+            viewerStartUri != null -> { viewerStartUri = null; selected = emptySet() }
+            actionMenu -> actionMenu = false
+            settingsOpen -> settingsOpen = false
+            albumMenu -> albumMenu = false
+            infoItem != null -> infoItem = null
+            renameItem != null -> renameItem = null
+            statusMessage != null -> statusMessage = null
+            selected.isNotEmpty() -> selected = emptySet()
+            tab == "Folders" && selectedAlbum != "All media" -> selectedAlbum = "All media"
+            tab != "Reel" -> { tab = "Reel"; selectedAlbum = "All media" }
+        }
+    }
 
     MaterialTheme(colorScheme = darkColorScheme(background = Color(0xFF101010), surface = Color(0xFF191919), primary = Color(0xFFFF4D7D))) {
         val viewerStart = viewerStartUri
