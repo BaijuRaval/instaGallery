@@ -1406,7 +1406,8 @@ private fun ReelsViewer(
         VerticalPager(
             state = pagerState,
             modifier = Modifier.fillMaxSize(),
-            beyondViewportPageCount = 1
+            // Avoid creating and preparing video decoders for neighboring pages.
+            beyondViewportPageCount = 0
         ) { page ->
             val item = items[page]
             if (item.isVideo) {
