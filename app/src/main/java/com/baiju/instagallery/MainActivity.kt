@@ -1744,7 +1744,10 @@ private fun calculateRotationFitScale(width: Int, height: Int, rotationDegrees: 
     val sin = kotlin.math.abs(kotlin.math.sin(radians))
     val rotatedWidth = width * cos + height * sin
     val rotatedHeight = height * cos + width * sin
-    return minOf(width / rotatedWidth, height / rotatedHeight).toFloat().coerceIn(0.01f, 1f)
+    val fitScale = minOf(width / rotatedWidth, height / rotatedHeight).toFloat().coerceIn(0.01f, 1f)
+    // Keep a little breathing room so a rotated portrait video does not touch or clip at screen edges.
+    val rotationMargin = 1f - 0.15f * sin.toFloat()
+    return (fitScale * rotationMargin).coerceIn(0.01f, 1f)
 }
 
 private fun calculateRotationDelta(
