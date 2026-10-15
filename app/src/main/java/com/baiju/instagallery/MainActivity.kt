@@ -210,6 +210,7 @@ private fun GalleryApp() {
     var menuScope by remember { mutableStateOf("All") }
     var menuContent by remember { mutableStateOf("Media") }
     var documentFolderMode by remember { mutableStateOf(false) }
+    var documentViewerOpen by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf(setOf<Uri>()) }
     var selectedFolder by remember { mutableStateOf<String?>(null) }
     var hiddenFolders by remember(context) {
@@ -665,7 +666,7 @@ private fun GalleryApp() {
     SideEffect {
         val window = activity?.window ?: return@SideEffect
         val controller = WindowInsetsControllerCompat(window, window.decorView)
-        if (viewerDisplayUri != null) {
+        if (viewerDisplayUri != null || (tab == "Documents" && documentViewerOpen)) {
             controller.hide(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
             controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         } else {
@@ -786,7 +787,9 @@ private fun GalleryApp() {
                 hasAccess = hasDocumentAccess,
                 onRequestAccess = ::requestDocumentsAccess,
                 initialViewMode = if (documentFolderMode) "folders" else "all",
+                onDocumentOpenChanged = { documentViewerOpen = it },
                 onBack = {
+                    documentViewerOpen = false
                     tab = if (menuScope == "Folder") "Folders" else "Reel"
                     menuContent = "Media"
                     documentFolderMode = false
