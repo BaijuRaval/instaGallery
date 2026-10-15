@@ -20,15 +20,8 @@ import android.media.MediaScannerConnection
 import java.io.File
 import java.io.FileOutputStream
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.expandIn
-import androidx.compose.animation.shrinkOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -163,6 +156,17 @@ private fun BottomAction(
         Text(label, color = Color.White, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Clip)
     }
 }
+
+private fun simpleZoomTransition() =
+    scaleIn(
+        initialScale = 0.92f,
+        transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center,
+        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing)
+    ) togetherWith scaleOut(
+        targetScale = 0.92f,
+        transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center,
+        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing)
+    )
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -653,7 +657,7 @@ private fun GalleryApp() {
     MaterialTheme(colorScheme = darkColorScheme(background = Color(0xFF101010), surface = Color(0xFF191919), primary = Color(0xFFFF4D7D))) {
         AnimatedContent(
             targetState = settingsPage,
-            transitionSpec = { slideInVertically(tween(220)) { height -> height / 10 } togetherWith slideOutVertically(tween(160)) { height -> -height / 10 } },
+            transitionSpec = { simpleZoomTransition() },
             label = "settingsTransition"
         ) { targetSettingsPage ->
         if (targetSettingsPage != null) {
@@ -693,17 +697,9 @@ private fun GalleryApp() {
         val viewerStart = viewerStartUri
         AnimatedContent(
             targetState = viewerStart.takeIf { visible.isNotEmpty() },
-            transitionSpec = {
-                scaleIn(
-                    initialScale = 0.82f,
-                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center,
-                    animationSpec = spring(dampingRatio = 0.82f, stiffness = 420f)
-                ) togetherWith scaleOut(
-                    targetScale = 0.96f,
-                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center,
-                    animationSpec = tween(160, easing = FastOutSlowInEasing)
-                )
-            },
+            modifier = Modifier.fillMaxSize(),
+            transitionSpec = { simpleZoomTransition() },
+            contentAlignment = Alignment.Center,
             label = "mediaViewerTransition"
         ) { animatedViewerStart ->
         if (animatedViewerStart != null && visible.isNotEmpty()) {
@@ -726,7 +722,7 @@ private fun GalleryApp() {
                 }
             )
         } else {
-            Column(Modifier.fillMaxSize().background(Color(0xFF101010)).statusBarsPadding().animateContentSize().pointerInput(tab, selected, selectedFolder, transferMode, mainMenuOpen) {
+            Column(Modifier.fillMaxSize().background(Color(0xFF101010)).statusBarsPadding().pointerInput(tab, selected, selectedFolder, transferMode, mainMenuOpen) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     var horizontalSwipe = false
@@ -760,8 +756,8 @@ private fun GalleryApp() {
                         selectedFolder != null -> "folder" to selectedFolder
                         else -> "normal" to null
                     },
-                    transitionSpec = { expandIn(expandFrom = Alignment.Center, animationSpec = tween(160)) togetherWith shrinkOut(shrinkTowards = Alignment.Center, animationSpec = tween(120)) },
-                    modifier = Modifier.fillMaxWidth().animateContentSize(),
+                    transitionSpec = { simpleZoomTransition() },
+                    modifier = Modifier.fillMaxWidth(),
                     label = "headerActionTransition"
                 ) { headerTarget ->
                     when (headerTarget.first) {
@@ -815,23 +811,9 @@ private fun GalleryApp() {
                 }
                 AnimatedContent(
                     targetState = tab to selectedAlbum,
-                    transitionSpec = {
-                        if (targetState.first != initialState.first) {
-                            val towardReel = targetState.first == "Reel"
-                            slideInHorizontally(tween(270)) { width -> if (towardReel) width / 4 else -width / 4 } togetherWith
-                                slideOutHorizontally(tween(190)) { width -> if (towardReel) -width / 4 else width / 4 }
-                        } else {
-                            val openingFolder = targetState.second != "All media"
-                            if (openingFolder) {
-                                expandIn(expandFrom = Alignment.Center, animationSpec = tween(300, easing = FastOutSlowInEasing)) togetherWith
-                                    shrinkOut(shrinkTowards = Alignment.Center, animationSpec = tween(200, easing = FastOutSlowInEasing))
-                            } else {
-                                expandIn(expandFrom = Alignment.TopCenter, animationSpec = tween(300, easing = FastOutSlowInEasing)) togetherWith
-                                    shrinkOut(shrinkTowards = Alignment.Center, animationSpec = tween(200, easing = FastOutSlowInEasing))
-                            }
-                        }
-                    },
+                    transitionSpec = { simpleZoomTransition() },
                     modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
                     label = "galleryContentTransition"
                 ) { galleryTarget ->
                     val gridTab = galleryTarget.first
@@ -859,7 +841,7 @@ private fun GalleryApp() {
                                 onRefresh = { refresh() },
                                 modifier = Modifier.fillMaxSize()
                             ) {
-                            LazyVerticalGrid(state = folderGridState, columns = GridCells.Fixed(folderGridColumns), modifier = Modifier.fillMaxSize().animateContentSize().pointerInput(Unit) {
+                            LazyVerticalGrid(state = folderGridState, columns = GridCells.Fixed(folderGridColumns), modifier = Modifier.fillMaxSize().pointerInput(Unit) {
                                 awaitEachGesture {
                                     awaitFirstDown(requireUnconsumed = false)
                                     var accumulatedZoom = 1f
@@ -889,7 +871,7 @@ private fun GalleryApp() {
                             }, contentPadding = PaddingValues(6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 items(folders.keys.toList(), key = { it }) { folder ->
                                     val folderItems = folders[folder].orEmpty()
-                                    Box(Modifier.animateItemPlacement().animateContentSize()) {
+                                    Box {
                                     FolderTile(
                                         name = folder,
                                         items = folderItems,
@@ -931,7 +913,7 @@ private fun GalleryApp() {
                         LazyVerticalGrid(
                             state = gridState,
                             columns = GridCells.Fixed(mediaGridColumns),
-                            modifier = Modifier.fillMaxSize().animateContentSize().pointerInput(Unit) {
+                            modifier = Modifier.fillMaxSize().pointerInput(Unit) {
                                 awaitEachGesture {
                                     awaitFirstDown(requireUnconsumed = false)
                                     var accumulatedZoom = 1f
@@ -1042,7 +1024,7 @@ private fun GalleryApp() {
                             verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             items(animatedVisible, key = { it.uri.toString() }) { item ->
-                                Box(Modifier.animateItemPlacement().animateContentSize()) {
+                                Box {
                                     MediaThumbnail(
                                         item, item.uri in selected, thumbnailLoader, thumbnailRevision
                                     )
@@ -1059,8 +1041,8 @@ private fun GalleryApp() {
                         selectedFolder != null -> "folder" to selectedFolder
                         else -> "tabs" to null
                     },
-                    transitionSpec = { expandIn(expandFrom = Alignment.Center, animationSpec = tween(160)) togetherWith shrinkOut(shrinkTowards = Alignment.Center, animationSpec = tween(120)) },
-                    modifier = Modifier.fillMaxWidth().animateContentSize(),
+                    transitionSpec = { simpleZoomTransition() },
+                    modifier = Modifier.fillMaxWidth(),
                     label = "bottomActionTransition"
                 ) { footerTarget ->
                     when (footerTarget.first) {
@@ -1425,7 +1407,7 @@ private fun PlaybackSettingRow(
     Surface(
         color = Color(0xFF191919),
         shape = MaterialTheme.shapes.large,
-        modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp).animateContentSize()
+        modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)
     ) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
