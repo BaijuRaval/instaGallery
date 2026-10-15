@@ -19,9 +19,8 @@ import android.view.LayoutInflater
 import android.media.MediaScannerConnection
 import java.io.File
 import java.io.FileOutputStream
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -45,6 +44,7 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.Job
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
@@ -1411,18 +1411,8 @@ private fun ReelsViewer(
                 var zoom by remember(item.uri) { mutableFloatStateOf(1f) }
                 var pan by remember(item.uri) { mutableStateOf(Offset.Zero) }
                 var rotation by remember(item.uri) { mutableFloatStateOf(0f) }
-                var rotationSettling by remember(item.uri) { mutableStateOf(false) }
-                val displayRotation by animateFloatAsState(
-                    targetValue = rotation,
-                    animationSpec = if (rotationSettling) spring(
-                        dampingRatio = 1f,
-                        stiffness = Spring.StiffnessMediumLow
-                    ) else snap(),
-                    finishedListener = { if (rotationSettling) rotationSettling = false },
-                    label = "imageRotation"
-                )
+                var rotationSnapJob by remember(item.uri) { mutableStateOf<Job?>(null) }
                 var viewportSize by remember(item.uri) { mutableStateOf(IntSize.Zero) }
-                val rotationFit = calculateRotationFitScale(viewportSize.width, viewportSize.height, displayRotation)
                 AsyncImage(
                     model = ImageRequest.Builder(context).data(item.uri).crossfade(false).build(),
                     imageLoader = imageLoader,
@@ -1432,23 +1422,35 @@ private fun ReelsViewer(
                         .pointerInput(item.uri) {
                             awaitEachGesture {
                                 awaitFirstDown(requireUnconsumed = false)
-                                if (rotationSettling) {
-                                    rotation = displayRotation
-                                    rotationSettling = false
-                                }
+                                rotationSnapJob?.cancel()
+                                rotationSnapJob = null
                                 var usedMultiTouch = false
                                 while (true) {
                                     val event = awaitPointerEvent(PointerEventPass.Initial)
                                     val pointers = event.changes.filter { it.pressed }
                                     if (pointers.isEmpty()) {
                                         if (usedMultiTouch) {
-                                            rotation = snapRotationToRightAngle(rotation)
-                                            rotationSettling = true
+                                            val fromRotation = rotation
+                                            val targetRotation = snapRotationToRightAngle(rotation)
+                                            rotationSnapJob?.cancel()
+                                            rotationSnapJob = scope.launch {
+                                                val animator = Animatable(fromRotation)
+                                                animator.animateTo(
+                                                    targetRotation,
+                                                    animationSpec = spring(
+                                                        dampingRatio = 1f,
+                                                        stiffness = Spring.StiffnessMediumLow
+                                                    )
+                                                ) {
+                                                    rotation = value
+                                                }
+                                            }
                                         }
                                         break
                                     }
                                     if (pointers.size >= 2) {
                                         usedMultiTouch = true
+                                        currentMediaZoomed = true
                                         val first = pointers[0]
                                         val second = pointers[1]
                                         val previousDistance = (first.previousPosition - second.previousPosition).getDistance()
@@ -1497,14 +1499,15 @@ private fun ReelsViewer(
                                 currentMediaZoomed = zoom > 1.001f
                             }
                         }
-                        .graphicsLayer(
-                            scaleX = zoom * rotationFit,
-                            scaleY = zoom * rotationFit,
-                            translationX = pan.x,
-                            translationY = pan.y,
-                            rotationZ = displayRotation,
+                        .graphicsLayer {
+                            val rotationFit = calculateRotationFitScale(viewportSize.width, viewportSize.height, rotation)
+                            scaleX = zoom * rotationFit
+                            scaleY = zoom * rotationFit
+                            translationX = pan.x
+                            translationY = pan.y
+                            rotationZ = rotation
                             transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
-                        ),
+                        },
                     contentScale = ContentScale.Fit
                 )
             }
@@ -1543,21 +1546,12 @@ private fun VideoPage(
         }
     }
     val exoPlayer = player
+    val rotationScope = rememberCoroutineScope()
     var zoom by remember(item.uri) { mutableFloatStateOf(1f) }
     var pan by remember(item.uri) { mutableStateOf(Offset.Zero) }
     var rotation by remember(item.uri) { mutableFloatStateOf(0f) }
-    var rotationSettling by remember(item.uri) { mutableStateOf(false) }
-    val displayRotation by animateFloatAsState(
-        targetValue = rotation,
-        animationSpec = if (rotationSettling) spring(
-            dampingRatio = 1f,
-            stiffness = Spring.StiffnessMediumLow
-        ) else snap(),
-        finishedListener = { if (rotationSettling) rotationSettling = false },
-        label = "videoRotation"
-    )
+    var rotationSnapJob by remember(item.uri) { mutableStateOf<Job?>(null) }
     var viewportSize by remember(item.uri) { mutableStateOf(IntSize.Zero) }
-    val rotationFit = calculateRotationFitScale(viewportSize.width, viewportSize.height, displayRotation)
     var seekBarVisible by remember(item.uri) { mutableStateOf(false) }
     var fastForwarding by remember(item.uri) { mutableStateOf(false) }
     var currentPositionMs by remember(item.uri) { mutableLongStateOf(initialPositionMs) }
@@ -1621,10 +1615,8 @@ private fun VideoPage(
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     if (!active) return@awaitEachGesture
-                    if (rotationSettling) {
-                        rotation = displayRotation
-                        rotationSettling = false
-                    }
+                    rotationSnapJob?.cancel()
+                    rotationSnapJob = null
 
                     val downPosition = down.position
                     var didMove = false
@@ -1651,8 +1643,21 @@ private fun VideoPage(
                         val pointers = event.changes.filter { it.pressed }
                         if (pointers.isEmpty()) {
                             if (multiTouch) {
-                                rotation = snapRotationToRightAngle(rotation)
-                                rotationSettling = true
+                                val fromRotation = rotation
+                                val targetRotation = snapRotationToRightAngle(rotation)
+                                rotationSnapJob?.cancel()
+                                rotationSnapJob = rotationScope.launch {
+                                    val animator = Animatable(fromRotation)
+                                    animator.animateTo(
+                                        targetRotation,
+                                        animationSpec = spring(
+                                            dampingRatio = 1f,
+                                            stiffness = Spring.StiffnessMediumLow
+                                        )
+                                    ) {
+                                        rotation = value
+                                    }
+                                }
                             }
                             finished = true
                             continue
@@ -1660,6 +1665,7 @@ private fun VideoPage(
 
                         if (pointers.size >= 2) {
                             multiTouch = true
+                            onZoomChanged(true)
                             if (longPressTriggered) {
                                 player.setPlaybackSpeed(1f)
                                 fastForwarding = false
@@ -1767,14 +1773,15 @@ private fun VideoPage(
             update = {
                 it.player = exoPlayer
             },
-            modifier = Modifier.fillMaxSize().onSizeChanged { viewportSize = it }.graphicsLayer(
-                scaleX = zoom * rotationFit,
-                scaleY = zoom * rotationFit,
-                translationX = pan.x,
-                translationY = pan.y,
-                rotationZ = displayRotation,
+            modifier = Modifier.fillMaxSize().onSizeChanged { viewportSize = it }.graphicsLayer {
+                val rotationFit = calculateRotationFitScale(viewportSize.width, viewportSize.height, rotation)
+                scaleX = zoom * rotationFit
+                scaleY = zoom * rotationFit
+                translationX = pan.x
+                translationY = pan.y
+                rotationZ = rotation
                 transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
-            )
+            }
         )
 
         if (fastForwarding) {
