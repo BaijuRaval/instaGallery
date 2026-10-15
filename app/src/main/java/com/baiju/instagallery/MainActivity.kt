@@ -1446,6 +1446,7 @@ private fun ReelsViewer(
                     viewportSize.width, viewportSize.height,
                     imagePainter.intrinsicSize.width, imagePainter.intrinsicSize.height, rotation
                 )
+                val latestScreenFillZoom by rememberUpdatedState(screenFillZoom)
                 Image(
                     painter = imagePainter,
                     contentDescription = item.name,
@@ -1536,10 +1537,10 @@ private fun ReelsViewer(
                                 currentMediaZoomed = zoom > 1.001f || screenFillActive
                             }
                         }
-                        .pointerInput(item.uri, mediaAutoFitToScreen, screenFillActive, screenFillZoom) {
+                        .pointerInput(item.uri, mediaAutoFitToScreen) {
                             detectTapGestures(onDoubleTap = {
                                 if (mediaAutoFitToScreen) {
-                                    val target = if (screenFillActive) 1f else screenFillZoom
+                                    val target = if (screenFillActive) 1f else latestScreenFillZoom
                                     screenFillActive = !screenFillActive
                                     currentMediaZoomed = target > 1.001f
                                     zoomAnimJob?.cancel()
@@ -1613,6 +1614,7 @@ private fun VideoPage(
     val screenFillZoom = calculateScreenFillZoom(
         viewportSize.width, viewportSize.height, videoAspectRatio, 1f, rotation
     )
+    val latestScreenFillZoom by rememberUpdatedState(screenFillZoom)
     var seekBarVisible by remember(item.uri) { mutableStateOf(false) }
     var fastForwarding by remember(item.uri) { mutableStateOf(false) }
     var currentPositionMs by remember(item.uri) { mutableLongStateOf(initialPositionMs) }
@@ -1677,12 +1679,12 @@ private fun VideoPage(
 
     Box(
         Modifier.fillMaxSize().background(Color.Black)
-            .pointerInput(item.uri, mediaAutoFitToScreen, screenFillActive, screenFillZoom) {
+            .pointerInput(item.uri, mediaAutoFitToScreen) {
                 detectTapGestures(
                     onTap = { if (active) onTogglePlay() },
                     onDoubleTap = {
                         if (active && mediaAutoFitToScreen) {
-                            val target = if (screenFillActive) 1f else screenFillZoom
+                            val target = if (screenFillActive) 1f else latestScreenFillZoom
                             screenFillActive = !screenFillActive
                             onZoomChanged(target > 1.001f || screenFillActive)
                             zoomAnimJob?.cancel()
@@ -1914,6 +1916,33 @@ private fun VideoPage(
             }
         }
     }
+}
+
+private fun calculateScreenFillZoom(
+    viewportWidth: Int,
+    viewportHeight: Int,
+    mediaWidthOrAspect: Float,
+    mediaHeight: Float,
+    rotationDegrees: Float
+): Float {
+    if (viewportWidth <= 0 || viewportHeight <= 0) return 2f
+    val mediaAspect = if (mediaHeight > 0f && mediaWidthOrAspect > 0f) {
+        mediaWidthOrAspect / mediaHeight
+    } else {
+        mediaWidthOrAspect
+    }
+    if (!mediaAspect.isFinite() || mediaAspect <= 0f) {
+        return (2f / calculateRotationFitScale(viewportWidth, viewportHeight, rotationDegrees)).coerceIn(1.8f, 12f)
+    }
+    val radians = Math.toRadians(rotationDegrees.toDouble())
+    val cos = kotlin.math.abs(kotlin.math.cos(radians))
+    val sin = kotlin.math.abs(kotlin.math.sin(radians))
+    val rotatedAspect = (mediaAspect * cos + sin) / (cos + mediaAspect * sin).coerceAtLeast(0.001)
+    val viewportAspect = viewportWidth.toFloat() / viewportHeight.toFloat()
+    val aspectScale = maxOf(rotatedAspect / viewportAspect, viewportAspect / rotatedAspect)
+    val rotationFit = calculateRotationFitScale(viewportWidth, viewportHeight, rotationDegrees)
+    // Counteract rotation-fit shrinkage so the animated zoom can cover the screen after rotation.
+    return maxOf(1.8f, aspectScale.toFloat() / rotationFit.coerceAtLeast(0.01f)).coerceIn(1.8f, 12f)
 }
 
 private fun snapRotationToRightAngle(angle: Float): Float {
