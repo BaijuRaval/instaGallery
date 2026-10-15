@@ -1,0 +1,21 @@
+# instaGallery
+
+A local-first Android gallery with a vertical, Reels-style viewer.
+
+## Features
+- Gallery grid for photos and videos
+- Full-screen vertical swipe between media
+- Videos autoplay; when one finishes, the next item starts (wraps to the first item)
+- Tap video to pause/resume; mute/unmute control
+- Album/folder picker
+- Photos appear full-screen in the same swipe sequence
+- Works with local media; no internet permission or uploads
+
+## Build
+1. Open this repository in Android Studio (JDK 17).
+2. Install Android SDK 35 and sync Gradle.
+3. Run on an Android device/emulator (API 26+).
+4. Grant photo/video permissions.
+
+## Project status
+Starter implementation. Please build and test with Android Studio before distributing. Android 14 selected-photo permissions may limit the visible media to what the user selected.
