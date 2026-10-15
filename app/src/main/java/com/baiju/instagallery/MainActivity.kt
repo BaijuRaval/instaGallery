@@ -85,7 +85,9 @@ import coil.memory.MemoryCache
 import coil.request.CachePolicy
 import coil.request.ImageRequest
 import coil.request.videoFrameMillis
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
 
@@ -148,6 +150,7 @@ private fun GalleryApp() {
     var transferReturnTab by remember { mutableStateOf("Reel") }
     var transferReturnAlbum by remember { mutableStateOf("All media") }
     var pendingTransferMessage by remember { mutableStateOf<String?>(null) }
+    val appScope = rememberCoroutineScope()
     val appContext = context.applicationContext
     val thumbnailLoader = remember(appContext) {
         ImageLoader.Builder(appContext)
@@ -195,7 +198,12 @@ private fun GalleryApp() {
         }
         permissionLauncher.launch(permissions)
     }
-    fun refresh() { media = context.queryGalleryMedia() }
+    fun refresh() {
+        appScope.launch {
+            val refreshed = withContext(Dispatchers.IO) { context.queryGalleryMedia() }
+            media = refreshed
+        }
+    }
     fun setFolderHidden(folder: String, hidden: Boolean) {
         val updated = if (hidden) hiddenFolders + folder else hiddenFolders - folder
         hiddenFolders = updated
@@ -350,7 +358,13 @@ private fun GalleryApp() {
         context.startActivity(Intent.createChooser(intent, "Share media"))
     }
 
-    LaunchedEffect(hasPermission) { if (hasPermission) media = context.queryGalleryMedia() }
+    LaunchedEffect(hasPermission) {
+        if (hasPermission) {
+            // Querying thousands of media rows on the main thread delays first paint and can make the grid flash.
+            val loadedMedia = withContext(Dispatchers.IO) { context.queryGalleryMedia() }
+            media = loadedMedia
+        }
+    }
     val visible = remember(media, selectedAlbum, hiddenFolders) {
         (if (selectedAlbum == "All media") media else media.filter { it.album == selectedAlbum })
             .filter { it.album !in hiddenFolders }
@@ -813,6 +827,13 @@ private fun SettingsScreen(
     }
 }
 
+@Composable
+private fun rememberThumbnailRequest(context: Context, item: GalleryMedia): ImageRequest = remember(
+    item.uri, item.size, item.dateAdded, item.thumbnailTimeMs
+) {
+    thumbnailRequest(context, item)
+}
+
 private fun thumbnailRequest(context: Context, item: GalleryMedia): ImageRequest {
     val frameTime = if (item.isVideo) item.thumbnailTimeMs else 0L
     val cacheKey = "media-thumbnail:${item.uri}:${item.size}:${item.dateAdded}:$frameTime"
@@ -991,6 +1012,7 @@ private fun FolderTile(
 ) {
     val context = LocalContext.current
     val cover = items.firstOrNull()
+    val coverRequest = if (cover != null) rememberThumbnailRequest(context, cover) else null
     Column(
         Modifier.fillMaxWidth()
             .background(if (selected) Color(0xFF503040) else Color(0xFF191919), MaterialTheme.shapes.medium)
@@ -999,7 +1021,7 @@ private fun FolderTile(
         Box(Modifier.fillMaxWidth().aspectRatio(1.15f).background(Color.DarkGray)) {
             if (cover != null) {
                 AsyncImage(
-                    model = thumbnailRequest(context, cover),
+                    model = coverRequest,
                     imageLoader = imageLoader,
                     contentDescription = "$name folder preview",
                     modifier = Modifier.fillMaxSize(),
@@ -1023,8 +1045,9 @@ private fun FolderTile(
 @Composable
 private fun MediaThumbnail(item: GalleryMedia, selected: Boolean, imageLoader: ImageLoader) {
     val context = LocalContext.current
+    val request = rememberThumbnailRequest(context, item)
     Box(Modifier.aspectRatio(0.78f).background(if (selected) Color(0xFF503040) else Color.DarkGray)) {
-        AsyncImage(model = thumbnailRequest(context, item),
+        AsyncImage(model = request,
             imageLoader = imageLoader, contentDescription = item.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         if (item.isVideo) Icon(Icons.Default.PlayArrow, "Video", tint = Color.White, modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(24.dp))
         if (selected) Box(Modifier.fillMaxSize().background(Color(0x6633A6FF)), contentAlignment = Alignment.TopEnd) {
@@ -1048,7 +1071,7 @@ private fun ReelsViewer(items: List<GalleryMedia>, startIndex: Int, imageLoader:
                     scope.launch { pagerState.animateScrollToPage(if (pagerState.currentPage < items.lastIndex) pagerState.currentPage + 1 else 0) }
                 }, onTogglePlay = { playing = !playing })
             } else {
-                AsyncImage(model = thumbnailRequest(LocalContext.current, item), imageLoader = imageLoader, contentDescription = item.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                AsyncImage(model = rememberThumbnailRequest(LocalContext.current, item), imageLoader = imageLoader, contentDescription = item.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
             }
         }
     }
