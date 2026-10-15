@@ -247,6 +247,40 @@ private fun GalleryApp() {
             pendingTransferMessage = null
         }
     }
+    val renamePermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        val pending = pendingRenameActions
+        val total = pendingRenameTotalCount
+        if (result.resultCode == android.app.Activity.RESULT_OK && pending.isNotEmpty()) {
+            var renamed = pendingRenameAlreadyDone
+            var failed = 0
+            pending.forEach { (item, newName) ->
+                try {
+                    val title = newName.substringBeforeLast('.', newName)
+                    val values = android.content.ContentValues().apply {
+                        put(MediaStore.MediaColumns.DISPLAY_NAME, newName)
+                        put(MediaStore.MediaColumns.TITLE, title)
+                    }
+                    if (context.contentResolver.update(item.uri, values, null, null) > 0) renamed++ else failed++
+                } catch (_: Exception) { failed++ }
+            }
+            statusMessage = if (renamed == total && failed == 0) {
+                "Renamed all $renamed file(s) successfully."
+            } else {
+                "Renamed $renamed of $total file(s). $failed file(s) could not be renamed."
+            }
+            media = context.queryGalleryMedia()
+            selected = emptySet()
+        } else if (pending.isNotEmpty()) {
+            statusMessage = if (pendingRenameAlreadyDone > 0) {
+                "Renamed $pendingRenameAlreadyDone of $total file(s); Android permission was not granted for the rest."
+            } else {
+                "Rename was cancelled because Android write permission was not granted."
+            }
+        }
+        pendingRenameActions = emptyList()
+        pendingRenameAlreadyDone = 0
+        pendingRenameTotalCount = 0
+    }
 
     fun requestPermissions() {
         val permissions = when {
