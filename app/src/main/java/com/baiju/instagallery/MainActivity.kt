@@ -751,7 +751,10 @@ private fun GalleryApp() {
                         }
                     }
                     else -> {
-                        val gridState = mediaGridState
+                        // The outgoing AnimatedContent page gets its own temporary state so a crossfade
+                        // between two albums never attaches one LazyGridState to two grids at once.
+                        val outgoingGridState = rememberLazyGridState()
+                        val gridState = if (galleryTarget == (tab to selectedAlbum)) mediaGridState else outgoingGridState
                         val latestSelection = rememberUpdatedState(selected)
                         PullToRefreshBox(
                             isRefreshing = isRefreshing,
