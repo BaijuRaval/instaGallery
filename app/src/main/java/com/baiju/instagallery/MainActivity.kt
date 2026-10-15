@@ -1297,7 +1297,7 @@ private fun GalleryMenuScreen(
                 Spacer(Modifier.width(16.dp))
                 Column(Modifier.weight(1f)) {
                     Text("Settings", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                    Text("Playback, auto-fit and hidden folders", color = Color.LightGray, fontSize = 13.sp)
+                    Text("Playback and hidden folders", color = Color.LightGray, fontSize = 13.sp)
                 }
                 Icon(Icons.Default.ChevronRight, null, tint = Color.LightGray)
             }
