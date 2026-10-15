@@ -1,6 +1,7 @@
 package com.baiju.instagallery
 
 import android.Manifest
+import android.content.ClipData
 import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
@@ -226,10 +227,18 @@ private fun GalleryApp() {
     }
     fun shareMedia(items: List<GalleryMedia>) {
         if (items.isEmpty()) return
+        val shareType = when {
+            items.size == 1 -> items.first().mimeType
+            items.all { it.mimeType.startsWith("image/") } -> "image/*"
+            items.all { it.mimeType.startsWith("video/") } -> "video/*"
+            else -> "*/*"
+        }
         val intent = Intent(if (items.size == 1) Intent.ACTION_SEND else Intent.ACTION_SEND_MULTIPLE).apply {
-            type = if (items.size == 1) items.first().mimeType else "*/*"
+            type = shareType
             if (items.size == 1) putExtra(Intent.EXTRA_STREAM, items.first().uri)
             else putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(items.map { it.uri }))
+            clipData = ClipData.newUri(context.contentResolver, "Shared media", items.first().uri)
+            items.drop(1).forEach { item -> clipData?.addItem(ClipData.Item(item.uri)) }
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         context.startActivity(Intent.createChooser(intent, "Share media"))
@@ -293,11 +302,10 @@ private fun GalleryApp() {
                         }, color = Color.LightGray, fontSize = 12.sp)
                     }
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                        IconButton(onClick = {
-                            if (selected.isNotEmpty()) shareMedia(media.filter { it.uri in selected })
-                            else statusMessage = "Long-press a photo or video to select it, then tap Share."
-                        }) {
-                            Icon(Icons.Default.Share, "Share selected media", tint = Color.White)
+                        if (selected.isNotEmpty()) {
+                            IconButton(onClick = { shareMedia(media.filter { it.uri in selected }) }) {
+                                Icon(Icons.Default.Share, "Share selected media", tint = Color.White)
+                            }
                         }
                         Box {
                             IconButton(onClick = { actionMenu = true }) {
