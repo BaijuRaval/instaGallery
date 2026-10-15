@@ -268,7 +268,10 @@ private fun scanDocuments(context: Context): Pair<List<BrowserDocument>, String?
                 val extension = name.substringAfterLast('.', "").lowercase()
                 if (extension !in supportedDocumentExtensions) continue
                 val rawPath = if (cursor.isNull(pathIndex)) "" else cursor.getString(pathIndex).orEmpty()
-                val relativePath = normalizeDocumentPath(context, rawPath)
+                val relativePath = normalizeDocumentPath(
+                    context,
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) rawPath else rawPath.substringBeforeLast('/')
+                )
                 val id = cursor.getLong(idIndex)
                 files.add(
                     BrowserDocument(
