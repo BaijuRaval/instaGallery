@@ -1368,7 +1368,7 @@ private fun GalleryMenuScreen(
                 Icon(Icons.Default.Settings, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(28.dp))
                 Spacer(Modifier.width(16.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("Settings", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Setting", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                     Text("Playback and hidden folders", color = Color.LightGray, fontSize = 13.sp)
                 }
                 Icon(Icons.Default.ChevronRight, null, tint = Color.LightGray)
