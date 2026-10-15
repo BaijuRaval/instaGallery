@@ -189,21 +189,14 @@ private fun GalleryApp() {
     var viewerDisplayUri by rememberSaveable { mutableStateOf<Uri?>(null) }
     var viewerCurrentUri by rememberSaveable { mutableStateOf<Uri?>(null) }
     var pendingGridScrollUri by remember { mutableStateOf<Uri?>(null) }
+    var highlightedMediaUri by remember { mutableStateOf<Uri?>(null) }
     var resumeHandled by remember { mutableStateOf(false) }
     val settingsPrefs = remember(context) {
         context.getSharedPreferences("instagallery_settings", Context.MODE_PRIVATE)
     }
-    var documentsTreeUriString by remember(context) {
-        mutableStateOf(settingsPrefs.getString("documents_tree_uri", null))
-    }
-    val documentTreePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        if (uri != null) {
-            try {
-                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            } catch (_: SecurityException) { }
-            documentsTreeUriString = uri.toString()
-            settingsPrefs.edit().putString("documents_tree_uri", uri.toString()).apply()
-        }
+    var hasDocumentAccess by remember { mutableStateOf(context.hasDocumentAccess()) }
+    val documentAccessLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        hasDocumentAccess = context.hasDocumentAccess()
     }
     var autoPlayNext by remember(context) {
         mutableStateOf(settingsPrefs.getBoolean("auto_play_next", true))
@@ -318,6 +311,25 @@ private fun GalleryApp() {
         pendingRenameTotalCount = 0
     }
 
+    fun requestDocumentsAccess() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                documentAccessLauncher.launch(
+                    Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                        .setData(Uri.parse("package:" + context.packageName))
+                )
+            } catch (_: Exception) {
+                try {
+                    documentAccessLauncher.launch(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                } catch (_: Exception) {
+                    statusMessage = "Open Android Settings > Apps > instaGallery > Special app access > All files access."
+                }
+            }
+        } else {
+            requestPermissions()
+            hasDocumentAccess = context.hasDocumentAccess()
+        }
+    }
     fun requestPermissions() {
         val permissions = when {
             Build.VERSION.SDK_INT >= 34 -> arrayOf(
@@ -597,14 +609,21 @@ private fun GalleryApp() {
 
     LaunchedEffect(pendingGridScrollUri, viewerStartUri, visible) {
         val target = pendingGridScrollUri
-        if (target != null && viewerStartUri == null) {
+        if (target != null && viewerStartUri == null && viewerDisplayUri == null) {
             val index = visible.indexOfFirst { it.uri == target }
             if (index >= 0) {
-                delay(80)
                 mediaGridState.scrollToItem(index)
+                withFrameNanos { }
+                mediaGridState.scrollToItem(index)
+                highlightedMediaUri = target
             }
             pendingGridScrollUri = null
         }
+    }
+    LaunchedEffect(highlightedMediaUri) {
+        val target = highlightedMediaUri ?: return@LaunchedEffect
+        delay(1_700)
+        if (highlightedMediaUri == target) highlightedMediaUri = null
     }
 
     // Always prioritize what the user is looking at now. Opening a folder cancels/reorders this
@@ -655,6 +674,7 @@ private fun GalleryApp() {
             mainMenuOpen -> mainMenuOpen = false
             viewerStartUri != null -> {
                 pendingGridScrollUri = viewerCurrentUri ?: viewerStartUri
+                highlightedMediaUri = null
                 viewerStartUri = null
                 selected = emptySet()
             }
@@ -722,8 +742,8 @@ private fun GalleryApp() {
             )
         } else if (tab == "Documents") {
             DocumentsScreen(
-                treeUri = documentsTreeUriString?.let { Uri.parse(it) },
-                onChooseFolder = { documentTreePicker.launch(null) },
+                hasAccess = hasDocumentAccess,
+                onRequestAccess = ::requestDocumentsAccess,
                 onBack = { tab = "Reel"; selectedAlbum = "All media"; selectedFolder = null; selected = emptySet() }
             )
         } else {
@@ -1034,6 +1054,7 @@ private fun GalleryApp() {
                                                 if (current.isNotEmpty()) {
                                                     selected = if (item.uri in current) current - item.uri else current + item.uri
                                                 } else {
+                                                    highlightedMediaUri = null
                                                     viewerStartUri = item.uri
                                                     viewerDisplayUri = item.uri
                                                 }
@@ -1078,7 +1099,7 @@ private fun GalleryApp() {
                             items(animatedVisible, key = { it.uri.toString() }) { item ->
                                 Box {
                                     MediaThumbnail(
-                                        item, item.uri in selected, thumbnailLoader, thumbnailRevision
+                                        item, item.uri in selected, item.uri == highlightedMediaUri, thumbnailLoader, thumbnailRevision
                                     )
                                 }
                             }
@@ -1294,7 +1315,7 @@ private fun GalleryMenuScreen(
             IconButton(onClick = onClose) { Icon(Icons.Default.Close, "Close menu", tint = Color.White) }
             Text("Menu", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold)
         }
-        Text("Media", color = Color.LightGray, fontSize = 13.sp)
+        Text("Folder / All", color = Color.LightGray, fontSize = 13.sp)
         Surface(
             onClick = { onSelectView("Folders") },
             color = if (currentView == "Folder") Color(0xFF3A2630) else Color(0xFF191919),
@@ -1302,72 +1323,34 @@ private fun GalleryMenuScreen(
             modifier = Modifier.fillMaxWidth()
         ) {
             Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Folder, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(30.dp))
+                Icon(Icons.Default.Folder, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(28.dp))
                 Spacer(Modifier.width(16.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("Folder view", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                    Text("Browse folders and open their media", color = Color.LightGray, fontSize = 13.sp)
+                    Text("Folder / All", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                    Text("All media folders", color = Color.LightGray, fontSize = 13.sp)
                 }
                 if (currentView == "Folder") Icon(Icons.Default.ChevronRight, null, tint = Color.White)
             }
         }
-        Surface(
-            onClick = { onSelectView("Reel") },
-            color = if (currentView == "Reel") Color(0xFF3A2630) else Color(0xFF191919),
-            shape = MaterialTheme.shapes.large,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.PlayArrow, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(30.dp))
-                Spacer(Modifier.width(16.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("Reel view", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                    Text("Swipe through photos and videos", color = Color.LightGray, fontSize = 13.sp)
-                }
-                if (currentView == "Reel") Icon(Icons.Default.ChevronRight, null, tint = Color.White)
-            }
-        }
+        Text("Media / Doc", color = Color.LightGray, fontSize = 13.sp)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Surface(
-                onClick = { onSelectView("Images") },
-                color = if (currentView == "Images") Color(0xFF3A2630) else Color(0xFF191919),
-                shape = MaterialTheme.shapes.large,
-                modifier = Modifier.weight(1f)
-            ) {
-                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Collections, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(24.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Images", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Surface(onClick = { onSelectView("Reel") },
+                color = if (currentView in setOf("Reel", "Images", "Videos")) Color(0xFF3A2630) else Color(0xFF191919),
+                shape = MaterialTheme.shapes.large, modifier = Modifier.weight(1f)) {
+                Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.PlayArrow, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(26.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Text("Media", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
-            Surface(
-                onClick = { onSelectView("Videos") },
-                color = if (currentView == "Videos") Color(0xFF3A2630) else Color(0xFF191919),
-                shape = MaterialTheme.shapes.large,
-                modifier = Modifier.weight(1f)
-            ) {
-                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.PlayArrow, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(24.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Videos", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Surface(onClick = { onSelectView("Documents") },
+                color = if (currentView == "Documents") Color(0xFF3A2630) else Color(0xFF191919),
+                shape = MaterialTheme.shapes.large, modifier = Modifier.weight(1f)) {
+                Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Description, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(26.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Text("Doc", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                 }
-            }
-        }
-        Text("Documents", color = Color.LightGray, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp))
-        Surface(
-            onClick = { onSelectView("Documents") },
-            color = if (currentView == "Documents") Color(0xFF3A2630) else Color(0xFF191919),
-            shape = MaterialTheme.shapes.large,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Description, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(28.dp))
-                Spacer(Modifier.width(16.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("Documents", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                    Text("PDF, Word, Excel, PowerPoint and text files", color = Color.LightGray, fontSize = 13.sp)
-                }
-                Icon(Icons.Default.ChevronRight, null, tint = Color.LightGray)
             }
         }
         Spacer(Modifier.height(6.dp))
@@ -1829,17 +1812,33 @@ private fun FolderTile(
 private fun MediaThumbnail(
     item: GalleryMedia,
     selected: Boolean,
+    highlighted: Boolean,
     imageLoader: ImageLoader,
     thumbnailRevision: Int
 ) {
     val context = LocalContext.current
     val request = rememberThumbnailRequest(context, item, thumbnailRevision)
+    val flashAlpha = remember { Animatable(0f) }
+    LaunchedEffect(highlighted) {
+        if (highlighted) {
+            repeat(6) { beat ->
+                flashAlpha.animateTo(if (beat % 2 == 0) 0.72f else 0f, animationSpec = tween(160))
+            }
+            flashAlpha.snapTo(0f)
+        } else {
+            flashAlpha.snapTo(0f)
+        }
+    }
     Box(Modifier.aspectRatio(0.78f).background(if (selected) Color(0xFF503040) else Color.DarkGray)) {
         AsyncImage(model = request,
             imageLoader = imageLoader, contentDescription = item.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         if (item.isVideo) Icon(Icons.Default.PlayArrow, "Video", tint = Color.White, modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(24.dp))
         if (selected) Box(Modifier.fillMaxSize().background(Color(0x6633A6FF)), contentAlignment = Alignment.TopEnd) {
             Text("✓", color = Color.White, fontSize = 22.sp, modifier = Modifier.padding(5.dp))
+        }
+        if (flashAlpha.value > 0f) {
+            Box(Modifier.fillMaxSize().background(Color(0xFFFF4D7D).copy(alpha = flashAlpha.value * 0.26f)))
+            Box(Modifier.fillMaxSize().padding(2.dp).border(3.dp, Color(0xFFFF4D7D).copy(alpha = flashAlpha.value)))
         }
     }
 }
