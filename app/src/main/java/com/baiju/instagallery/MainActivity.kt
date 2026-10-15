@@ -9,6 +9,9 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
+import android.media.MediaScannerConnection
+import java.io.File
+import java.io.FileOutputStream
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -130,7 +133,8 @@ private fun GalleryApp() {
                 Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
             )
             Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
-            else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.M -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            else -> emptyArray()
         }
         permissionLauncher.launch(permissions)
     }
@@ -353,7 +357,8 @@ private fun Context.hasMediaPermission(): Boolean {
             Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
         )
         Build.VERSION.SDK_INT >= 33 -> listOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
-        else -> listOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.M -> listOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        else -> emptyList()
     }
     return permissions.any { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
 }
@@ -363,6 +368,7 @@ private fun Context.queryGalleryMedia(): List<GalleryMedia> {
     listOf(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, MediaStore.Video.Media.EXTERNAL_CONTENT_URI).forEach { collection ->
         val projection = mutableListOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.MIME_TYPE, MediaStore.MediaColumns.DATE_ADDED, MediaStore.MediaColumns.SIZE, "bucket_display_name").apply {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) add(MediaStore.MediaColumns.RELATIVE_PATH)
+            else add(MediaStore.MediaColumns.DATA)
         }.toTypedArray()
         try {
             contentResolver.query(collection, projection, null, null, "${MediaStore.MediaColumns.DATE_ADDED} DESC")?.use { cursor ->
@@ -372,7 +378,7 @@ private fun Context.queryGalleryMedia(): List<GalleryMedia> {
                 val dateCol = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_ADDED)
                 val sizeCol = cursor.getColumnIndex(MediaStore.MediaColumns.SIZE)
                 val albumCol = cursor.getColumnIndex("bucket_display_name")
-                val pathCol = cursor.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH)
+                val pathCol = cursor.getColumnIndex(if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) MediaStore.MediaColumns.RELATIVE_PATH else MediaStore.MediaColumns.DATA)
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idCol)
                     result += GalleryMedia(ContentUris.withAppendedId(collection, id),
@@ -381,7 +387,11 @@ private fun Context.queryGalleryMedia(): List<GalleryMedia> {
                         if (albumCol >= 0) cursor.getString(albumCol) ?: "Other" else "Other",
                         if (dateCol >= 0) cursor.getLong(dateCol) else 0L,
                         if (sizeCol >= 0) cursor.getLong(sizeCol) else 0L,
-                        if (pathCol >= 0) cursor.getString(pathCol).orEmpty() else if (collection == MediaStore.Video.Media.EXTERNAL_CONTENT_URI) "Movies/" else "Pictures/")
+                        if (pathCol >= 0) {
+                            val storedPath = cursor.getString(pathCol).orEmpty()
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) storedPath
+                            else File(storedPath).parentFile?.absolutePath?.plus(File.separator).orEmpty()
+                        } else if (collection == MediaStore.Video.Media.EXTERNAL_CONTENT_URI) "Movies/" else "Pictures/")
                 }
             }
         } catch (_: SecurityException) {}
@@ -390,7 +400,26 @@ private fun Context.queryGalleryMedia(): List<GalleryMedia> {
 }
 
 private fun Context.copyMediaToFolder(item: GalleryMedia, relativePath: String): Boolean {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || relativePath.isBlank()) return false
+    if (relativePath.isBlank()) return false
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+        return try {
+            val folder = File(relativePath)
+            if (!folder.exists() && !folder.mkdirs()) return false
+            val baseName = item.name.substringBeforeLast('.', item.name)
+            val extension = item.name.substringAfterLast('.', "")
+            var outputFile = File(folder, item.name)
+            var suffix = 1
+            while (outputFile.exists()) {
+                val name = if (extension.isBlank()) "$baseName ($suffix)" else "$baseName ($suffix).$extension"
+                outputFile = File(folder, name)
+                suffix++
+            }
+            val input = contentResolver.openInputStream(item.uri) ?: return false
+            input.use { source -> FileOutputStream(outputFile).use { target -> source.copyTo(target) } }
+            MediaScannerConnection.scanFile(this, arrayOf(outputFile.absolutePath), arrayOf(item.mimeType), null)
+            true
+        } catch (_: Exception) { false }
+    }
     val collection = if (item.isVideo) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
     var destinationUri: Uri? = null
     return try {
