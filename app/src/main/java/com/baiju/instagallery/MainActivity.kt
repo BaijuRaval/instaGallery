@@ -45,6 +45,8 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
@@ -78,14 +80,29 @@ import androidx.media3.ui.PlayerView
 import coil.ImageLoader
 import coil.compose.AsyncImage
 import coil.decode.VideoFrameDecoder
+import coil.disk.DiskCache
+import coil.memory.MemoryCache
+import coil.request.CachePolicy
 import coil.request.ImageRequest
 import coil.request.videoFrameMillis
 import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
 
-private data class GalleryMedia(val uri: Uri, val name: String, val mimeType: String, val album: String, val dateAdded: Long, val size: Long, val relativePath: String) {
+private data class GalleryMedia(
+    val uri: Uri,
+    val name: String,
+    val mimeType: String,
+    val album: String,
+    val dateAdded: Long,
+    val size: Long,
+    val relativePath: String,
+    val durationMs: Long = 0L
+) {
     val isVideo: Boolean get() = mimeType.startsWith("video/")
+    // Use the 10-second frame for long videos, but never request past the end of a short clip.
+    val thumbnailTimeMs: Long get() = if (!isVideo) 0L else if (durationMs <= 0L) 10_000L
+        else if (durationMs > 10_000L) 10_000L else (durationMs - 500L).coerceAtLeast(0L)
 }
 private data class CopyResult(val success: Boolean, val error: String? = null)
 
@@ -121,7 +138,8 @@ private fun GalleryApp() {
     var renameItem by remember { mutableStateOf<GalleryMedia?>(null) }
     var renameText by remember { mutableStateOf("") }
     var statusMessage by remember { mutableStateOf<String?>(null) }
-    var settingsOpen by remember { mutableStateOf(false) }
+    var settingsPage by remember { mutableStateOf<String?>(null) }
+    var folderRemoveTarget by remember { mutableStateOf<String?>(null) }
     var manageMediaInfoOpen by remember { mutableStateOf(false) }
     var albumMenu by remember { mutableStateOf(false) }
     var actionMenu by remember { mutableStateOf(false) }
@@ -130,9 +148,27 @@ private fun GalleryApp() {
     var transferReturnTab by remember { mutableStateOf("Reel") }
     var transferReturnAlbum by remember { mutableStateOf("All media") }
     var pendingTransferMessage by remember { mutableStateOf<String?>(null) }
-    val thumbnailLoader = remember(context) {
-        ImageLoader.Builder(context).components { add(VideoFrameDecoder.Factory()) }.crossfade(true).build()
+    val appContext = context.applicationContext
+    val thumbnailLoader = remember(appContext) {
+        ImageLoader.Builder(appContext)
+            .memoryCache {
+                MemoryCache.Builder(appContext)
+                    .maxSizePercent(0.20)
+                    .build()
+            }
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(File(appContext.cacheDir, "instagallery_thumbnails"))
+                    .maxSizeBytes(128L * 1024L * 1024L)
+                    .build()
+            }
+            .components { add(VideoFrameDecoder.Factory()) }
+            .crossfade(false)
+            .build()
     }
+    // These states live above the screen switch so opening media/settings doesn't reset scroll.
+    val mediaGridState = rememberLazyGridState()
+    val folderGridState = rememberLazyGridState()
 
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         hasPermission = context.hasMediaPermission()
@@ -166,6 +202,7 @@ private fun GalleryApp() {
         context.getSharedPreferences("instagallery_settings", Context.MODE_PRIVATE)
             .edit().putStringSet("hidden_folders", updated).apply()
         if (hidden && selectedFolder == folder) selectedFolder = null
+        if (hidden && selectedAlbum == folder) selectedAlbum = "All media"
         actionMenu = false
     }
     fun renameFolder(folder: String, proposedName: String) {
@@ -332,13 +369,16 @@ private fun GalleryApp() {
     }
     val hasInnerScreen = viewerStartUri != null || actionMenu || settingsOpen || manageMediaInfoOpen || albumMenu ||
         infoItem != null || renameItem != null || statusMessage != null || transferMode != null ||
-        selected.isNotEmpty() || selectedFolder != null || (tab == "Folders" && selectedAlbum != "All media") || tab != "Reel"
+        selected.isNotEmpty() || selectedFolder != null || settingsPage != null || folderRemoveTarget != null ||
+        (tab == "Folders" && selectedAlbum != "All media") || tab != "Reel"
     BackHandler(enabled = hasInnerScreen) {
         when {
             viewerStartUri != null -> { viewerStartUri = null; selected = emptySet() }
             transferMode != null -> cancelTransfer()
             actionMenu -> actionMenu = false
-            settingsOpen -> settingsOpen = false
+            settingsPage == "hiddenFolders" -> settingsPage = "main"
+            settingsPage != null -> settingsPage = null
+            folderRemoveTarget != null -> folderRemoveTarget = null
             manageMediaInfoOpen -> manageMediaInfoOpen = false
             albumMenu -> albumMenu = false
             infoItem != null -> infoItem = null
@@ -352,10 +392,21 @@ private fun GalleryApp() {
     }
 
     MaterialTheme(colorScheme = darkColorScheme(background = Color(0xFF101010), surface = Color(0xFF191919), primary = Color(0xFFFF4D7D))) {
+        if (settingsPage != null) {
+            SettingsScreen(
+                page = settingsPage!!,
+                folderNames = media.map { it.album }.distinct().sorted(),
+                folderCounts = media.groupingBy { it.album }.eachCount(),
+                hiddenFolders = hiddenFolders,
+                onBack = { settingsPage = if (settingsPage == "hiddenFolders") "main" else null },
+                onOpenHiddenFolders = { settingsPage = "hiddenFolders" },
+                onToggleFolder = { folder, hidden -> setFolderHidden(folder, hidden) }
+            )
+        } else {
         val viewerStart = viewerStartUri
         if (viewerStart != null && visible.isNotEmpty()) {
             val startIndex = visible.indexOfFirst { it.uri == viewerStart }.coerceAtLeast(0)
-            ReelsViewer(visible, startIndex) { viewerStartUri = null }
+            ReelsViewer(visible, startIndex, thumbnailLoader) { viewerStartUri = null }
         } else {
             Column(Modifier.fillMaxSize().background(Color(0xFF101010)).statusBarsPadding()) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -395,8 +446,7 @@ private fun GalleryApp() {
                                         DropdownMenuItem(text = { Text("Delete folder") }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = Color(0xFFFF6680)) },
                                             onClick = {
                                                 actionMenu = false
-                                                selectedFolder = null
-                                                deleteMedia(media.filter { it.album == folderName })
+                                                folderRemoveTarget = folderName
                                             })
                                     } else {
                                         if (tab == "Reel" || selectedAlbum != "All media") {
@@ -437,7 +487,7 @@ private fun GalleryApp() {
                                 }
                             }
                         } else if (tab == "Folders") {
-                            IconButton(onClick = { settingsOpen = true }) {
+                            IconButton(onClick = { settingsPage = "main" }) {
                                 Icon(Icons.Default.Settings, "Settings", tint = Color.White)
                             }
                         }
@@ -457,7 +507,7 @@ private fun GalleryApp() {
                         if (folders.isEmpty()) {
                             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { Text("No folders found", color = Color.LightGray) }
                         } else {
-                            LazyVerticalGrid(columns = GridCells.Fixed(2), modifier = Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            LazyVerticalGrid(state = folderGridState, columns = GridCells.Fixed(2), modifier = Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 items(folders.keys.toList(), key = { it }) { folder ->
                                     val folderItems = folders[folder].orEmpty()
                                     FolderTile(
@@ -485,7 +535,7 @@ private fun GalleryApp() {
                         }
                     }
                     else -> {
-                        val gridState = rememberLazyGridState()
+                        val gridState = mediaGridState
                         val latestSelection = rememberUpdatedState(selected)
                         LazyVerticalGrid(
                             state = gridState,
@@ -579,51 +629,6 @@ private fun GalleryApp() {
                     NavigationBarItem(selected = tab == "Reel", onClick = { tab = "Reel"; selectedAlbum = "All media"; selectedFolder = null; selected = emptySet() }, icon = { Icon(Icons.Default.PlayArrow, null) }, label = { Text("Reel") })
                 }
             }
-            if (settingsOpen) {
-                val allFolderNames = media.map { it.album }.distinct().sorted()
-                androidx.compose.ui.window.Dialog(
-                    onDismissRequest = { settingsOpen = false },
-                    properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
-                ) {
-                    Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFF101010)) {
-                        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(20.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("Settings", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                                IconButton(onClick = { settingsOpen = false }) {
-                                    Icon(Icons.Default.Close, "Close settings", tint = Color.White)
-                                }
-                            }
-                            Spacer(Modifier.height(8.dp))
-                            Text("Hide or unhide folders", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                            Text("Hidden folders won't appear in Folders or Reel. You can unhide them here.", color = Color.LightGray, fontSize = 13.sp)
-                            Spacer(Modifier.height(12.dp))
-                            if (allFolderNames.isEmpty()) {
-                                Text("No folders found yet.", color = Color.LightGray)
-                            } else {
-                                Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
-                                    allFolderNames.forEach { folder ->
-                                        Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(Icons.Default.Folder, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(26.dp))
-                                            Spacer(Modifier.width(12.dp))
-                                            Column(Modifier.weight(1f)) {
-                                                Text(folder, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                                Text("${media.count { it.album == folder }} items • ${if (folder in hiddenFolders) "Hidden" else "Visible"}",
-                                                    color = Color.LightGray, fontSize = 12.sp)
-                                            }
-                                            TextButton(onClick = { setFolderHidden(folder, folder !in hiddenFolders) }) {
-                                                Text(if (folder in hiddenFolders) "Unhide" else "Hide")
-                                            }
-                                        }
-                                        Divider(color = Color(0xFF303030))
-                                    }
-                                }
-                            }
-                            Spacer(Modifier.height(12.dp))
-                            Text("More settings will be added here.", color = Color.Gray, fontSize = 13.sp)
-                        }
-                    }
-                }
-            }
             if (manageMediaInfoOpen) AlertDialog(
                 onDismissRequest = { manageMediaInfoOpen = false },
                 title = { Text("Enable direct Move") },
@@ -650,6 +655,23 @@ private fun GalleryApp() {
                         albums.forEach { album -> TextButton(onClick = { selectedAlbum = album; tab = "Folders"; albumMenu = false }) { Text(album, maxLines = 1, overflow = TextOverflow.Ellipsis) } }
                     }
                 }, confirmButton = { TextButton(onClick = { albumMenu = false }) { Text("Close") } })
+            }
+            folderRemoveTarget?.let { folderName ->
+                AlertDialog(
+                    onDismissRequest = { folderRemoveTarget = null },
+                    title = { Text("Remove folder from instaGallery?") },
+                    text = {
+                        Text("This only hides \"$folderName\" from instaGallery. Photos, videos, other files, and the actual folder on your phone will stay untouched.")
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            setFolderHidden(folderName, true)
+                            selectedFolder = null
+                            folderRemoveTarget = null
+                        }) { Text("Remove from app") }
+                    },
+                    dismissButton = { TextButton(onClick = { folderRemoveTarget = null }) { Text("Cancel") } }
+                )
             }
             folderDetailsName?.let { folderName ->
                 AlertDialog(
@@ -705,7 +727,104 @@ private fun GalleryApp() {
             }
             statusMessage?.let { msg -> AlertDialog(onDismissRequest = { statusMessage = null }, text = { Text(msg) }, confirmButton = { TextButton(onClick = { statusMessage = null }) { Text("OK") } }) }
         }
+        }
     }
+}
+
+@Composable
+private fun SettingsScreen(
+    page: String,
+    folderNames: List<String>,
+    folderCounts: Map<String, Int>,
+    hiddenFolders: Set<String>,
+    onBack: () -> Unit,
+    onOpenHiddenFolders: () -> Unit,
+    onToggleFolder: (String, Boolean) -> Unit
+) {
+    Column(Modifier.fillMaxSize().background(Color(0xFF101010)).statusBarsPadding().navigationBarsPadding()) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.Default.ArrowBack, "Back", tint = Color.White)
+            }
+            Text(
+                if (page == "hiddenFolders") "Hide or unhide folders" else "Settings",
+                color = Color.White,
+                fontSize = 23.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        if (page == "hiddenFolders") {
+            Text(
+                "Choose which folders appear in instaGallery. Your original files and phone folders are not changed.",
+                color = Color.LightGray,
+                fontSize = 14.sp,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
+            )
+            if (folderNames.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("No folders found.", color = Color.LightGray)
+                }
+            } else {
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    folderNames.forEach { folder ->
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Folder, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(26.dp))
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(folder, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${folderCounts[folder] ?: 0} media items", color = Color.LightGray, fontSize = 12.sp)
+                            }
+                            TextButton(onClick = { onToggleFolder(folder, folder !in hiddenFolders) }) {
+                                Text(if (folder in hiddenFolders) "Unhide" else "Hide")
+                            }
+                        }
+                        Divider(color = Color(0xFF303030))
+                    }
+                }
+            }
+        } else {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Surface(
+                    onClick = onOpenHiddenFolders,
+                    color = Color(0xFF191919),
+                    shape = MaterialTheme.shapes.large,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.VisibilityOff, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(28.dp))
+                        Spacer(Modifier.width(14.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Hide or unhide folders", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Manage which folders appear in the gallery", color = Color.LightGray, fontSize = 12.sp)
+                        }
+                        Icon(Icons.Default.ChevronRight, null, tint = Color.LightGray)
+                    }
+                }
+                Spacer(Modifier.height(18.dp))
+                Text("More settings will be added here.", color = Color.Gray, fontSize = 13.sp)
+            }
+        }
+    }
+}
+
+private fun thumbnailRequest(context: Context, item: GalleryMedia): ImageRequest {
+    val frameTime = if (item.isVideo) item.thumbnailTimeMs else 0L
+    val cacheKey = "media-thumbnail:${item.uri}:${item.size}:${item.dateAdded}:$frameTime"
+    return ImageRequest.Builder(context)
+        .data(item.uri)
+        .memoryCacheKey(cacheKey)
+        .diskCacheKey(cacheKey)
+        .memoryCachePolicy(CachePolicy.ENABLED)
+        .diskCachePolicy(CachePolicy.ENABLED)
+        .apply { if (item.isVideo) videoFrameMillis(frameTime) }
+        .crossfade(false)
+        .build()
 }
 
 private fun Context.hasMediaPermission(): Boolean {
@@ -731,6 +850,7 @@ private fun Context.queryGalleryMedia(): List<GalleryMedia> {
     val result = mutableListOf<GalleryMedia>()
     listOf(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, MediaStore.Video.Media.EXTERNAL_CONTENT_URI).forEach { collection ->
         val projection = mutableListOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.MIME_TYPE, MediaStore.MediaColumns.DATE_ADDED, MediaStore.MediaColumns.SIZE, "bucket_display_name").apply {
+            if (collection == MediaStore.Video.Media.EXTERNAL_CONTENT_URI) add(MediaStore.Video.VideoColumns.DURATION)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) add(MediaStore.MediaColumns.RELATIVE_PATH)
             else add(MediaStore.MediaColumns.DATA)
         }.toTypedArray()
@@ -742,6 +862,7 @@ private fun Context.queryGalleryMedia(): List<GalleryMedia> {
                 val dateCol = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_ADDED)
                 val sizeCol = cursor.getColumnIndex(MediaStore.MediaColumns.SIZE)
                 val albumCol = cursor.getColumnIndex("bucket_display_name")
+                val durationCol = cursor.getColumnIndex(MediaStore.Video.VideoColumns.DURATION)
                 val pathCol = cursor.getColumnIndex(if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) MediaStore.MediaColumns.RELATIVE_PATH else MediaStore.MediaColumns.DATA)
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idCol)
@@ -755,7 +876,8 @@ private fun Context.queryGalleryMedia(): List<GalleryMedia> {
                             val storedPath = cursor.getString(pathCol).orEmpty()
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) storedPath
                             else File(storedPath).parentFile?.absolutePath?.plus(File.separator).orEmpty()
-                        } else if (collection == MediaStore.Video.Media.EXTERNAL_CONTENT_URI) "Movies/" else "Pictures/")
+                        } else if (collection == MediaStore.Video.Media.EXTERNAL_CONTENT_URI) "Movies/" else "Pictures/",
+                        if (collection == MediaStore.Video.Media.EXTERNAL_CONTENT_URI && durationCol >= 0) cursor.getLong(durationCol) else 0L)
                 }
             }
         } catch (_: SecurityException) {}
@@ -877,7 +999,7 @@ private fun FolderTile(
         Box(Modifier.fillMaxWidth().aspectRatio(1.15f).background(Color.DarkGray)) {
             if (cover != null) {
                 AsyncImage(
-                    model = ImageRequest.Builder(context).data(cover.uri).apply { if (cover.isVideo) videoFrameMillis(0) }.crossfade(true).build(),
+                    model = thumbnailRequest(context, cover),
                     imageLoader = imageLoader,
                     contentDescription = "$name folder preview",
                     modifier = Modifier.fillMaxSize(),
@@ -902,7 +1024,7 @@ private fun FolderTile(
 private fun MediaThumbnail(item: GalleryMedia, selected: Boolean, imageLoader: ImageLoader) {
     val context = LocalContext.current
     Box(Modifier.aspectRatio(0.78f).background(if (selected) Color(0xFF503040) else Color.DarkGray)) {
-        AsyncImage(model = ImageRequest.Builder(context).data(item.uri).apply { if (item.isVideo) videoFrameMillis(0) }.crossfade(true).build(),
+        AsyncImage(model = thumbnailRequest(context, item),
             imageLoader = imageLoader, contentDescription = item.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         if (item.isVideo) Icon(Icons.Default.PlayArrow, "Video", tint = Color.White, modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(24.dp))
         if (selected) Box(Modifier.fillMaxSize().background(Color(0x6633A6FF)), contentAlignment = Alignment.TopEnd) {
@@ -913,7 +1035,7 @@ private fun MediaThumbnail(item: GalleryMedia, selected: Boolean, imageLoader: I
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ReelsViewer(items: List<GalleryMedia>, startIndex: Int, onClose: () -> Unit) {
+private fun ReelsViewer(items: List<GalleryMedia>, startIndex: Int, imageLoader: ImageLoader, onClose: () -> Unit) {
     val pagerState = rememberPagerState(initialPage = startIndex, pageCount = { items.size })
     var playing by remember { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
@@ -926,7 +1048,7 @@ private fun ReelsViewer(items: List<GalleryMedia>, startIndex: Int, onClose: () 
                     scope.launch { pagerState.animateScrollToPage(if (pagerState.currentPage < items.lastIndex) pagerState.currentPage + 1 else 0) }
                 }, onTogglePlay = { playing = !playing })
             } else {
-                AsyncImage(model = ImageRequest.Builder(LocalContext.current).data(item.uri).crossfade(true).build(), contentDescription = item.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                AsyncImage(model = thumbnailRequest(LocalContext.current, item), imageLoader = imageLoader, contentDescription = item.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
             }
         }
     }
