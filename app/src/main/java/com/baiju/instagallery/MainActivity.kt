@@ -104,6 +104,7 @@ import java.text.DateFormat
 import java.util.Date
 import java.security.MessageDigest
 import kotlin.math.min
+import kotlin.math.atan2
 
 private data class GalleryMedia(
     val uri: Uri,
@@ -1389,6 +1390,7 @@ private fun ReelsViewer(
             } else {
                 var zoom by remember(item.uri) { mutableFloatStateOf(1f) }
                 var pan by remember(item.uri) { mutableStateOf(Offset.Zero) }
+                var rotation by remember(item.uri) { mutableFloatStateOf(0f) }
                 AsyncImage(
                     model = ImageRequest.Builder(context).data(item.uri).crossfade(false).build(),
                     imageLoader = imageLoader,
@@ -1411,6 +1413,10 @@ private fun ReelsViewer(
                                             val newZoom = (oldZoom * (currentDistance / previousDistance)).coerceIn(1f, 5f)
                                             val oldCenter = (first.previousPosition + second.previousPosition) / 2f
                                             val newCenter = (first.position + second.position) / 2f
+                                            rotation = (rotation + calculateRotationDelta(
+                                                first.previousPosition, second.previousPosition,
+                                                first.position, second.position
+                                            )) % 360f
                                             zoom = newZoom
                                             pan = calculatePinchPan(
                                                 currentPan = pan,
@@ -1437,6 +1443,7 @@ private fun ReelsViewer(
                             scaleY = zoom,
                             translationX = pan.x,
                             translationY = pan.y,
+                            rotationZ = rotation,
                             transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
                         ),
                     contentScale = ContentScale.Fit
@@ -1478,6 +1485,7 @@ private fun VideoPage(
     val exoPlayer = player
     var zoom by remember(item.uri) { mutableFloatStateOf(1f) }
     var pan by remember(item.uri) { mutableStateOf(Offset.Zero) }
+    var rotation by remember(item.uri) { mutableFloatStateOf(0f) }
     var seekBarVisible by remember(item.uri) { mutableStateOf(false) }
     var fastForwarding by remember(item.uri) { mutableStateOf(false) }
     var currentPositionMs by remember(item.uri) { mutableLongStateOf(initialPositionMs) }
@@ -1585,6 +1593,10 @@ private fun VideoPage(
                                 val newZoom = (oldZoom * (currentDistance / previousDistance)).coerceIn(1f, 5f)
                                 val oldCenter = (first.previousPosition + second.previousPosition) / 2f
                                 val newCenter = (first.position + second.position) / 2f
+                                rotation = (rotation + calculateRotationDelta(
+                                    first.previousPosition, second.previousPosition,
+                                    first.position, second.position
+                                )) % 360f
                                 zoom = newZoom
                                 pan = calculatePinchPan(
                                     currentPan = pan,
@@ -1668,6 +1680,7 @@ private fun VideoPage(
                 scaleY = zoom,
                 translationX = pan.x,
                 translationY = pan.y,
+                rotationZ = rotation,
                 transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
             )
         )
@@ -1716,6 +1729,20 @@ private fun VideoPage(
             }
         }
     }
+}
+
+private fun calculateRotationDelta(
+    oldFirst: Offset,
+    oldSecond: Offset,
+    newFirst: Offset,
+    newSecond: Offset
+): Float {
+    val oldAngle = atan2(oldSecond.y - oldFirst.y, oldSecond.x - oldFirst.x)
+    val newAngle = atan2(newSecond.y - newFirst.y, newSecond.x - newFirst.x)
+    var delta = Math.toDegrees((newAngle - oldAngle).toDouble()).toFloat()
+    if (delta > 180f) delta -= 360f
+    if (delta < -180f) delta += 360f
+    return delta
 }
 
 private fun calculatePinchPan(
