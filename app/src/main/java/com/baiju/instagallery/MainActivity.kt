@@ -1058,6 +1058,7 @@ private fun GalleryApp() {
                                                     selected = if (item.uri in current) current - item.uri else current + item.uri
                                                 } else {
                                                     highlightedMediaUri = null
+                                                    viewerCurrentUri = item.uri
                                                     viewerStartUri = item.uri
                                                     viewerDisplayUri = item.uri
                                                 }
