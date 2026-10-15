@@ -1,6 +1,8 @@
 package com.baiju.instagallery
 
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.database.Cursor
 import android.graphics.Bitmap
@@ -13,6 +15,7 @@ import android.webkit.MimeTypeMap
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -21,6 +24,8 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.transformable
+import androidx.compose.foundation.rememberTransformableState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Description
@@ -35,10 +40,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
@@ -69,7 +77,8 @@ internal fun DocumentsScreen(
     hasAccess: Boolean,
     onRequestAccess: () -> Unit,
     onBack: () -> Unit,
-    initialViewMode: String = "all"
+    initialViewMode: String = "all",
+    onDocumentOpenChanged: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     var documents by remember { mutableStateOf(emptyList<BrowserDocument>()) }
@@ -79,6 +88,10 @@ internal fun DocumentsScreen(
     var viewMode by remember { mutableStateOf(initialViewMode) }
     var currentFolder by remember { mutableStateOf("") }
     var openedDocument by remember { mutableStateOf<BrowserDocument?>(null) }
+
+    LaunchedEffect(openedDocument) {
+        onDocumentOpenChanged(openedDocument != null)
+    }
 
     LaunchedEffect(hasAccess, scanRevision) {
         if (!hasAccess) {
@@ -331,6 +344,17 @@ private fun BuiltInDocumentReader(document: BrowserDocument, onBack: () -> Unit)
     val requiresOriginalViewer = document.extension in originalViewerExtensions
     var openError by remember(document.uri) { mutableStateOf<String?>(null) }
 
+    // The file itself is the screen: no in-app title bar, toolbar or status/navigation bars.
+    DisposableEffect(document.uri) {
+        val window = context.findActivity()?.window
+        val controller = window?.let { WindowInsetsControllerCompat(it, it.decorView) }
+        controller?.hide(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
+        controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        onDispose {
+            controller?.show(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
+        }
+    }
+
     LaunchedEffect(document.uri) {
         if (requiresOriginalViewer) {
             val mime = when (document.extension) {
@@ -362,32 +386,16 @@ private fun BuiltInDocumentReader(document: BrowserDocument, onBack: () -> Unit)
         }
     }
 
-    Column(Modifier.fillMaxSize().background(Color(0xFF101010)).statusBarsPadding().navigationBarsPadding()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back to documents", tint = Color.White) }
-            Column(Modifier.weight(1f)) {
-                Text(document.name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp,
-                    maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(
-                    if (requiresOriginalViewer) "Opening original file" else document.extension.uppercase() + " reader",
-                    color = Color.LightGray, fontSize = 11.sp
-                )
-            }
-        }
-        Divider(color = Color(0xFF303030))
+    Box(Modifier.fillMaxSize().background(Color(0xFF101010))) {
         when {
             requiresOriginalViewer -> {
-                Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        if (openError == null) {
-                            CircularProgressIndicator(color = Color(0xFFFF4D7D))
-                            Spacer(Modifier.height(14.dp))
-                            Text("Opening with original formatting…", color = Color.White)
-                        } else {
-                            Text(openError.orEmpty(), color = Color.White)
-                            Spacer(Modifier.height(14.dp))
-                            TextButton(onClick = onBack) { Text("Back to documents") }
-                        }
+                if (openError != null) {
+                    Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                        Text(openError.orEmpty(), color = Color.White)
+                    }
+                } else {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = Color(0xFFFF4D7D))
                     }
                 }
             }
@@ -395,6 +403,15 @@ private fun BuiltInDocumentReader(document: BrowserDocument, onBack: () -> Unit)
             else -> TextBasedDocumentReader(document)
         }
     }
+}
+
+private fun Context.findActivity(): Activity? {
+    var current: Context = this
+    while (current is ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
+    }
+    return current as? Activity
 }
 
 private data class PdfDocumentInfo(val pageCount: Int, val error: String?)
@@ -405,6 +422,7 @@ private fun PdfDocumentReader(uri: Uri) {
     var pageCount by remember(uri) { mutableIntStateOf(0) }
     var loading by remember(uri) { mutableStateOf(true) }
     var error by remember(uri) { mutableStateOf<String?>(null) }
+    var zoom by remember(uri) { mutableFloatStateOf(1f) }
 
     LaunchedEffect(uri) {
         loading = true
@@ -434,31 +452,43 @@ private fun PdfDocumentReader(uri: Uri) {
         error != null -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
             Text(error.orEmpty(), color = Color.White)
         }
-        else -> Column(Modifier.fillMaxSize()) {
-            Text(
-                "$pageCount pages · scroll vertically to read",
-                color = Color.LightGray,
-                fontSize = 12.sp,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)
-            )
+        else -> Box(Modifier.fillMaxSize()) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 16.dp)
+                contentPadding = PaddingValues(bottom = 20.dp)
             ) {
                 items((0 until pageCount).toList(), key = { it }) { pageIndex ->
-                    PdfPageContent(uri = uri, pageIndex = pageIndex)
+                    PdfPageContent(
+                        uri = uri,
+                        pageIndex = pageIndex,
+                        zoom = zoom,
+                        onZoomChange = { zoom = it.coerceIn(0.5f, 4f) }
+                    )
                 }
             }
+            DocumentZoomControls(
+                zoom = zoom,
+                onZoomChange = { zoom = it.coerceIn(0.5f, 4f) },
+                modifier = Modifier.align(Alignment.BottomEnd).padding(14.dp)
+            )
         }
     }
 }
 
 @Composable
-private fun PdfPageContent(uri: Uri, pageIndex: Int) {
+private fun PdfPageContent(
+    uri: Uri,
+    pageIndex: Int,
+    zoom: Float,
+    onZoomChange: (Float) -> Unit
+) {
     val context = LocalContext.current
     var bitmap by remember(uri, pageIndex) { mutableStateOf<Bitmap?>(null) }
     var error by remember(uri, pageIndex) { mutableStateOf<String?>(null) }
     var loading by remember(uri, pageIndex) { mutableStateOf(true) }
+    val transformState = rememberTransformableState { zoomChange, _, _ ->
+        onZoomChange(zoom * zoomChange)
+    }
 
     LaunchedEffect(uri, pageIndex) {
         loading = true
@@ -469,7 +499,7 @@ private fun PdfPageContent(uri: Uri, pageIndex: Int) {
                 fd.use { descriptor ->
                     PdfRenderer(descriptor).use { renderer ->
                         renderer.openPage(pageIndex).use { page ->
-                            // Render the original page, retaining its embedded colors and graphics.
+                            // Render with full color; do not recolor or modify the source file.
                             val scale = minOf(2.0f, 1800f / maxOf(page.width, page.height).toFloat())
                             val image = Bitmap.createBitmap(
                                 (page.width * scale).toInt().coerceAtLeast(1),
@@ -490,22 +520,64 @@ private fun PdfPageContent(uri: Uri, pageIndex: Int) {
         loading = false
     }
 
-    when {
-        bitmap != null -> Image(
-            bitmap = bitmap!!.asImageBitmap(),
-            contentDescription = "PDF page ${pageIndex + 1}",
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)
-                .background(Color.White)
-        )
-        loading -> Box(
-            Modifier.fillMaxWidth().height(180.dp),
-            contentAlignment = Alignment.Center
-        ) { CircularProgressIndicator(color = Color(0xFFFF4D7D)) }
-        error != null -> Text(
-            error.orEmpty(),
-            color = Color.White,
-            modifier = Modifier.fillMaxWidth().padding(18.dp)
-        )
+    BoxWithConstraints(
+        Modifier.fillMaxWidth().padding(horizontal = 0.dp, vertical = 1.dp)
+            .transformable(state = transformState)
+    ) {
+        val pageWidth = maxWidth * zoom
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+            when {
+                bitmap != null -> Image(
+                    bitmap = bitmap!!.asImageBitmap(),
+                    contentDescription = "PDF page ${pageIndex + 1}",
+                    modifier = Modifier.width(pageWidth).padding(horizontal = 2.dp, vertical = 3.dp)
+                        .background(Color.White)
+                )
+                loading -> Box(
+                    Modifier.fillMaxWidth().height(180.dp),
+                    contentAlignment = Alignment.Center
+                ) { CircularProgressIndicator(color = Color(0xFFFF4D7D)) }
+                error != null -> Text(
+                    error.orEmpty(),
+                    color = Color.White,
+                    modifier = Modifier.fillMaxWidth().padding(18.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DocumentZoomControls(
+    zoom: Float,
+    onZoomChange: (Float) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        color = Color(0xE8202020),
+        shape = MaterialTheme.shapes.extraLarge,
+        shadowElevation = 6.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(
+                onClick = { onZoomChange((zoom / 1.2f).coerceAtLeast(0.5f)) },
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+            ) { Text("−", color = Color.White, fontSize = 24.sp) }
+            Text(
+                "${(zoom * 100).toInt()}%",
+                color = Color.White,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(horizontal = 4.dp)
+            )
+            TextButton(
+                onClick = { onZoomChange((zoom * 1.2f).coerceAtMost(4f)) },
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+            ) { Text("+", color = Color.White, fontSize = 24.sp) }
+        }
     }
 }
 
@@ -515,6 +587,7 @@ private fun TextBasedDocumentReader(document: BrowserDocument) {
     var content by remember(document.uri) { mutableStateOf<String?>(null) }
     var error by remember(document.uri) { mutableStateOf<String?>(null) }
     var loading by remember(document.uri) { mutableStateOf(true) }
+    var zoom by remember(document.uri) { mutableFloatStateOf(1f) }
     LaunchedEffect(document.uri) {
         loading = true
         val result = withContext(Dispatchers.IO) {
@@ -529,8 +602,20 @@ private fun TextBasedDocumentReader(document: BrowserDocument) {
         loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(color = Color(0xFFFF4D7D))
         }
-        content != null -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp)) {
-            Text(content.orEmpty(), color = Color(0xFFEDEDED), fontSize = 14.sp, lineHeight = 21.sp)
+        content != null -> Box(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp)) {
+                Text(
+                    content.orEmpty(),
+                    color = Color(0xFFEDEDED),
+                    fontSize = 14.sp * zoom,
+                    lineHeight = 21.sp * zoom
+                )
+            }
+            DocumentZoomControls(
+                zoom = zoom,
+                onZoomChange = { zoom = it.coerceIn(0.5f, 4f) },
+                modifier = Modifier.align(Alignment.BottomEnd).padding(14.dp)
+            )
         }
         else -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
