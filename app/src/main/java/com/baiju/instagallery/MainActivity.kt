@@ -233,7 +233,7 @@ private fun GalleryApp() {
                     }
                 }
                 Row(Modifier.fillMaxWidth().navigationBarsPadding().background(Color(0xFF171717)).padding(vertical = 5.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    NavigationBarItem(selected = tab == "Folders", onClick = { tab = "Folders"; albumMenu = true }, icon = { Icon(Icons.Default.Folder, null) }, label = { Text("Folders") })
+                    NavigationBarItem(selected = tab == "Folders", onClick = { tab = "Folders"; selectedAlbum = "All media" }, icon = { Icon(Icons.Default.Folder, null) }, label = { Text("Folders") })
                     NavigationBarItem(selected = tab == "Reel", onClick = { tab = "Reel"; selectedAlbum = "All media" }, icon = { Icon(Icons.Default.PlayArrow, null) }, label = { Text("Reel") })
                 }
             }
