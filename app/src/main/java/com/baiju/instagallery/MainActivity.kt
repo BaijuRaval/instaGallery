@@ -695,32 +695,44 @@ private fun GalleryApp() {
             )
         } else {
         val viewerStart = viewerStartUri
-        AnimatedContent(
-            targetState = viewerStart.takeIf { visible.isNotEmpty() },
-            modifier = Modifier.fillMaxSize(),
-            transitionSpec = { simpleZoomTransition() },
-            contentAlignment = Alignment.Center,
-            label = "mediaViewerTransition"
-        ) { animatedViewerStart ->
-        if (animatedViewerStart != null && visible.isNotEmpty()) {
-            val startIndex = visible.indexOfFirst { it.uri == animatedViewerStart }.coerceAtLeast(0)
-            ReelsViewer(
-                items = visible,
-                startIndex = startIndex,
-                imageLoader = thumbnailLoader,
-                autoPlayNext = autoPlayNext,
-                rememberLastPlayed = rememberLastPlayed,
-                onPageViewed = { uri ->
-                    viewerCurrentUri = uri
-                    val savedUri = settingsPrefs.getString("last_media_uri", null)
-                    if (savedUri != uri.toString()) {
-                        settingsPrefs.edit()
-                            .putString("last_media_uri", uri.toString())
-                            .putLong("last_playback_position", 0L)
-                            .apply()
+        if (viewerStart != null && visible.isNotEmpty()) {
+            // Do not keep the old gallery grid alive behind the opening animation.
+            // An opaque black backing prevents old thumbnails showing around the zooming viewer.
+            val viewerScale = remember(viewerStart) { Animatable(0.92f) }
+            LaunchedEffect(viewerStart) {
+                viewerScale.animateTo(
+                    1f,
+                    animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing)
+                )
+            }
+            Box(Modifier.fillMaxSize().background(Color.Black)) {
+                Box(
+                    Modifier.fillMaxSize().graphicsLayer {
+                        scaleX = viewerScale.value
+                        scaleY = viewerScale.value
+                        transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
                     }
+                ) {
+                    val startIndex = visible.indexOfFirst { it.uri == viewerStart }.coerceAtLeast(0)
+                    ReelsViewer(
+                        items = visible,
+                        startIndex = startIndex,
+                        imageLoader = thumbnailLoader,
+                        autoPlayNext = autoPlayNext,
+                        rememberLastPlayed = rememberLastPlayed,
+                        onPageViewed = { uri ->
+                            viewerCurrentUri = uri
+                            val savedUri = settingsPrefs.getString("last_media_uri", null)
+                            if (savedUri != uri.toString()) {
+                                settingsPrefs.edit()
+                                    .putString("last_media_uri", uri.toString())
+                                    .putLong("last_playback_position", 0L)
+                                    .apply()
+                            }
+                        }
+                    )
                 }
-            )
+            }
         } else {
             Column(Modifier.fillMaxSize().background(Color(0xFF101010)).statusBarsPadding().pointerInput(tab, selected, selectedFolder, transferMode, mainMenuOpen) {
                 awaitEachGesture {
@@ -1221,7 +1233,6 @@ private fun GalleryApp() {
                 }
             }
             statusMessage?.let { msg -> AlertDialog(onDismissRequest = { statusMessage = null }, text = { Text(msg) }, confirmButton = { TextButton(onClick = { statusMessage = null }) { Text("OK") } }) }
-        }
         }
         }
         }
