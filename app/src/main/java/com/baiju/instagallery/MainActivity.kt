@@ -1606,7 +1606,13 @@ private fun VideoPage(
     var pan by remember(item.uri) { mutableStateOf(Offset.Zero) }
     var rotation by remember(item.uri) { mutableFloatStateOf(0f) }
     var rotationSnapJob by remember(item.uri) { mutableStateOf<Job?>(null) }
+    var zoomAnimJob by remember(item.uri) { mutableStateOf<Job?>(null) }
+    var screenFillActive by remember(item.uri) { mutableStateOf(false) }
+    var videoAspectRatio by remember(item.uri) { mutableFloatStateOf(0f) }
     var viewportSize by remember(item.uri) { mutableStateOf(IntSize.Zero) }
+    val screenFillZoom = calculateScreenFillZoom(
+        viewportSize.width, viewportSize.height, videoAspectRatio, 1f, rotation
+    )
     var seekBarVisible by remember(item.uri) { mutableStateOf(false) }
     var fastForwarding by remember(item.uri) { mutableStateOf(false) }
     var currentPositionMs by remember(item.uri) { mutableLongStateOf(initialPositionMs) }
@@ -1656,6 +1662,11 @@ private fun VideoPage(
 
     DisposableEffect(player, active, autoPlayNext) {
         val listener = object : Player.Listener {
+            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+                if (videoSize.width > 0 && videoSize.height > 0) {
+                    videoAspectRatio = videoSize.width * videoSize.pixelWidthHeightRatio / videoSize.height.toFloat()
+                }
+            }
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_ENDED && active && autoPlayNext) onEnded()
             }
@@ -1666,12 +1677,34 @@ private fun VideoPage(
 
     Box(
         Modifier.fillMaxSize().background(Color.Black)
+            .pointerInput(item.uri, mediaAutoFitToScreen, screenFillActive, screenFillZoom) {
+                detectTapGestures(
+                    onTap = { if (active) onTogglePlay() },
+                    onDoubleTap = {
+                        if (active && mediaAutoFitToScreen) {
+                            val target = if (screenFillActive) 1f else screenFillZoom
+                            screenFillActive = !screenFillActive
+                            onZoomChanged(target > 1.001f || screenFillActive)
+                            zoomAnimJob?.cancel()
+                            zoomAnimJob = rotationScope.launch {
+                                val animator = Animatable(zoom)
+                                animator.animateTo(
+                                    target.coerceIn(0.25f, 12f),
+                                    animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing)
+                                ) { zoom = value }
+                            }
+                        }
+                    }
+                )
+            }
             .pointerInput(item.uri, active, player) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     if (!active) return@awaitEachGesture
                     rotationSnapJob?.cancel()
                     rotationSnapJob = null
+                    zoomAnimJob?.cancel()
+                    zoomAnimJob = null
 
                     val downPosition = down.position
                     var didMove = false
@@ -1720,6 +1753,9 @@ private fun VideoPage(
 
                         if (pointers.size >= 2) {
                             multiTouch = true
+                            screenFillActive = false
+                            zoomAnimJob?.cancel()
+                            zoomAnimJob = null
                             onZoomChanged(true)
                             if (longPressTriggered) {
                                 player.setPlaybackSpeed(1f)
@@ -1798,11 +1834,7 @@ private fun VideoPage(
                             seekBarVisible = true
                             change.consume()
                         }
-                        else if (zoom > 1.001f && kotlin.math.abs(dy) > viewConfiguration.touchSlop) {
-                            // At zoom > 1, vertical drags pan the media rather than pulling the pager.
-                            pan += change.position - change.previousPosition
-                            change.consume()
-                        }
+                        // Don't consume vertical motion: the pager must still scroll when media is zoomed/rotated.
                     }
 
                     if (longPressTriggered && !horizontalSeeking) {
@@ -1810,8 +1842,7 @@ private fun VideoPage(
                         fastForwarding = false
                     }
                     seekBarVisible = false
-                    onZoomChanged(zoom > 1.001f)
-                    if (!didMove && !multiTouch && !longPressTriggered) onTogglePlay()
+                    onZoomChanged(zoom > 1.001f || screenFillActive)
                 }
             },
         contentAlignment = Alignment.Center
