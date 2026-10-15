@@ -30,6 +30,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -62,6 +64,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -90,6 +94,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -133,6 +138,22 @@ private fun GalleryApp() {
     var media by remember { mutableStateOf(emptyList<GalleryMedia>()) }
     var selectedAlbum by remember { mutableStateOf("All media") }
     var viewerStartUri by remember { mutableStateOf<Uri?>(null) }
+    var viewerCurrentUri by remember { mutableStateOf<Uri?>(null) }
+    var pendingGridScrollUri by remember { mutableStateOf<Uri?>(null) }
+    var blinkMediaUri by remember { mutableStateOf<Uri?>(null) }
+    var resumeHandled by remember { mutableStateOf(false) }
+    val settingsPrefs = remember(context) {
+        context.getSharedPreferences("instagallery_settings", Context.MODE_PRIVATE)
+    }
+    var autoPlayNext by remember(context) {
+        mutableStateOf(settingsPrefs.getBoolean("auto_play_next", true))
+    }
+    var loopMedia by remember(context) {
+        mutableStateOf(settingsPrefs.getBoolean("loop_media", false))
+    }
+    var rememberLastPlayed by remember(context) {
+        mutableStateOf(settingsPrefs.getBoolean("remember_last_played", false))
+    }
     var tab by remember { mutableStateOf("Reel") }
     var selected by remember { mutableStateOf(setOf<Uri>()) }
     var selectedFolder by remember { mutableStateOf<String?>(null) }
@@ -371,6 +392,39 @@ private fun GalleryApp() {
             .filter { it.album !in hiddenFolders }
     }
 
+    LaunchedEffect(hasPermission, media, rememberLastPlayed) {
+        if (hasPermission && media.isNotEmpty() && !resumeHandled) {
+            resumeHandled = true
+            if (rememberLastPlayed) {
+                val lastUri = settingsPrefs.getString("last_media_uri", null)
+                if (lastUri != null && media.any { it.uri.toString() == lastUri }) {
+                    viewerStartUri = Uri.parse(lastUri)
+                    viewerCurrentUri = Uri.parse(lastUri)
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(pendingGridScrollUri, viewerStartUri, visible) {
+        val target = pendingGridScrollUri
+        if (target != null && viewerStartUri == null) {
+            val index = visible.indexOfFirst { it.uri == target }
+            if (index >= 0) {
+                delay(80)
+                mediaGridState.scrollToItem(index)
+                blinkMediaUri = target
+            }
+            pendingGridScrollUri = null
+        }
+    }
+
+    LaunchedEffect(blinkMediaUri) {
+        if (blinkMediaUri != null) {
+            delay(1_000)
+            blinkMediaUri = null
+        }
+    }
+
     // Always prioritize what the user is looking at now. Opening a folder cancels/reorders this
     // background queue so its thumbnails are generated before unrelated gallery items.
     LaunchedEffect(media, tab, selectedAlbum, hiddenFolders) {
@@ -416,7 +470,11 @@ private fun GalleryApp() {
         (tab == "Folders" && selectedAlbum != "All media") || tab != "Reel"
     BackHandler(enabled = hasInnerScreen) {
         when {
-            viewerStartUri != null -> { viewerStartUri = null; selected = emptySet() }
+            viewerStartUri != null -> {
+                pendingGridScrollUri = viewerCurrentUri ?: viewerStartUri
+                viewerStartUri = null
+                selected = emptySet()
+            }
             transferMode != null -> cancelTransfer()
             actionMenu -> actionMenu = false
             settingsPage == "hiddenFolders" -> settingsPage = "main"
@@ -441,6 +499,21 @@ private fun GalleryApp() {
                 folderNames = media.map { it.album }.distinct().sorted(),
                 folderCounts = media.groupingBy { it.album }.eachCount(),
                 hiddenFolders = hiddenFolders,
+                autoPlayNext = autoPlayNext,
+                loopMedia = loopMedia,
+                rememberLastPlayed = rememberLastPlayed,
+                onToggleAutoPlayNext = { enabled ->
+                    autoPlayNext = enabled
+                    settingsPrefs.edit().putBoolean("auto_play_next", enabled).apply()
+                },
+                onToggleLoopMedia = { enabled ->
+                    loopMedia = enabled
+                    settingsPrefs.edit().putBoolean("loop_media", enabled).apply()
+                },
+                onToggleRememberLastPlayed = { enabled ->
+                    rememberLastPlayed = enabled
+                    settingsPrefs.edit().putBoolean("remember_last_played", enabled).apply()
+                },
                 onBack = { settingsPage = if (settingsPage == "hiddenFolders") "main" else null },
                 onOpenHiddenFolders = { settingsPage = "hiddenFolders" },
                 onToggleFolder = { folder, hidden -> setFolderHidden(folder, hidden) }
@@ -449,7 +522,24 @@ private fun GalleryApp() {
         val viewerStart = viewerStartUri
         if (viewerStart != null && visible.isNotEmpty()) {
             val startIndex = visible.indexOfFirst { it.uri == viewerStart }.coerceAtLeast(0)
-            ReelsViewer(visible, startIndex, thumbnailLoader) { viewerStartUri = null }
+            ReelsViewer(
+                items = visible,
+                startIndex = startIndex,
+                imageLoader = thumbnailLoader,
+                autoPlayNext = autoPlayNext,
+                loopMedia = loopMedia,
+                rememberLastPlayed = rememberLastPlayed,
+                onPageViewed = { uri ->
+                    viewerCurrentUri = uri
+                    val savedUri = settingsPrefs.getString("last_media_uri", null)
+                    if (savedUri != uri.toString()) {
+                        settingsPrefs.edit()
+                            .putString("last_media_uri", uri.toString())
+                            .putLong("last_playback_position", 0L)
+                            .apply()
+                    }
+                }
+            )
         } else {
             Column(Modifier.fillMaxSize().background(Color(0xFF101010)).statusBarsPadding()) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -663,7 +753,10 @@ private fun GalleryApp() {
                             verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             items(visible, key = { it.uri.toString() }) { item ->
-                                MediaThumbnail(item, item.uri in selected, thumbnailLoader, thumbnailRevision)
+                                MediaThumbnail(
+                                    item, item.uri in selected, thumbnailLoader, thumbnailRevision,
+                                    highlighted = item.uri == blinkMediaUri
+                                )
                             }
                         }
                     }
@@ -703,16 +796,17 @@ private fun GalleryApp() {
             folderRemoveTarget?.let { folderName ->
                 AlertDialog(
                     onDismissRequest = { folderRemoveTarget = null },
-                    title = { Text("Remove folder from instaGallery?") },
+                    title = { Text("Delete media in folder?") },
                     text = {
-                        Text("This only hides \"$folderName\" from instaGallery. Photos, videos, other files, and the actual folder on your phone will stay untouched.")
+                        Text("Delete all photos and videos inside \"${folderName}\"? Only images and videos will be deleted. Other file types and the folder itself will be left untouched.")
                     },
                     confirmButton = {
                         TextButton(onClick = {
-                            setFolderHidden(folderName, true)
-                            selectedFolder = null
+                            val folderMedia = media.filter { it.album == folderName }
                             folderRemoveTarget = null
-                        }) { Text("Remove from app") }
+                            selectedFolder = null
+                            if (folderMedia.isNotEmpty()) deleteMedia(folderMedia)
+                        }) { Text("Delete photos & videos", color = Color(0xFFFF6680)) }
                     },
                     dismissButton = { TextButton(onClick = { folderRemoveTarget = null }) { Text("Cancel") } }
                 )
@@ -781,6 +875,12 @@ private fun SettingsScreen(
     folderNames: List<String>,
     folderCounts: Map<String, Int>,
     hiddenFolders: Set<String>,
+    autoPlayNext: Boolean,
+    loopMedia: Boolean,
+    rememberLastPlayed: Boolean,
+    onToggleAutoPlayNext: (Boolean) -> Unit,
+    onToggleLoopMedia: (Boolean) -> Unit,
+    onToggleRememberLastPlayed: (Boolean) -> Unit,
     onBack: () -> Unit,
     onOpenHiddenFolders: () -> Unit,
     onToggleFolder: (String, Boolean) -> Unit
@@ -851,8 +951,51 @@ private fun SettingsScreen(
                     }
                 }
                 Spacer(Modifier.height(18.dp))
-                Text("More settings will be added here.", color = Color.Gray, fontSize = 13.sp)
+                PlaybackSettingRow(
+                    title = "Auto-play next media",
+                    subtitle = "Videos move to the next item; images stay for 5 seconds",
+                    checked = autoPlayNext,
+                    onCheckedChange = onToggleAutoPlayNext
+                )
+                PlaybackSettingRow(
+                    title = "Loop current media",
+                    subtitle = "Repeat the current video or keep the current image open",
+                    checked = loopMedia,
+                    onCheckedChange = onToggleLoopMedia
+                )
+                PlaybackSettingRow(
+                    title = "Remember last playback",
+                    subtitle = "Reopen the last viewed item and resume video time",
+                    checked = rememberLastPlayed,
+                    onCheckedChange = onToggleRememberLastPlayed
+                )
             }
+        }
+    }
+}
+
+@Composable
+private fun PlaybackSettingRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Surface(
+        color = Color(0xFF191919),
+        shape = MaterialTheme.shapes.large,
+        modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                Text(title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(3.dp))
+                Text(subtitle, color = Color.LightGray, fontSize = 12.sp)
+            }
+            Switch(checked = checked, onCheckedChange = onCheckedChange)
         }
     }
 }
@@ -1166,9 +1309,27 @@ private fun FolderTile(
 }
 
 @Composable
-private fun MediaThumbnail(item: GalleryMedia, selected: Boolean, imageLoader: ImageLoader, thumbnailRevision: Int) {
+private fun MediaThumbnail(
+    item: GalleryMedia,
+    selected: Boolean,
+    imageLoader: ImageLoader,
+    thumbnailRevision: Int,
+    highlighted: Boolean = false
+) {
     val context = LocalContext.current
     val request = rememberThumbnailRequest(context, item, thumbnailRevision)
+    var flashOn by remember(item.uri) { mutableStateOf(false) }
+    LaunchedEffect(highlighted) {
+        if (highlighted) {
+            repeat(4) {
+                flashOn = !flashOn
+                delay(125)
+            }
+            flashOn = false
+        } else {
+            flashOn = false
+        }
+    }
     Box(Modifier.aspectRatio(0.78f).background(if (selected) Color(0xFF503040) else Color.DarkGray)) {
         AsyncImage(model = request,
             imageLoader = imageLoader, contentDescription = item.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
@@ -1176,61 +1337,330 @@ private fun MediaThumbnail(item: GalleryMedia, selected: Boolean, imageLoader: I
         if (selected) Box(Modifier.fillMaxSize().background(Color(0x6633A6FF)), contentAlignment = Alignment.TopEnd) {
             Text("✓", color = Color.White, fontSize = 22.sp, modifier = Modifier.padding(5.dp))
         }
+        if (flashOn) Box(Modifier.fillMaxSize().background(Color(0x99FF4D7D)))
     }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ReelsViewer(items: List<GalleryMedia>, startIndex: Int, imageLoader: ImageLoader, onClose: () -> Unit) {
+private fun ReelsViewer(
+    items: List<GalleryMedia>,
+    startIndex: Int,
+    imageLoader: ImageLoader,
+    autoPlayNext: Boolean,
+    loopMedia: Boolean,
+    rememberLastPlayed: Boolean,
+    onPageViewed: (Uri) -> Unit
+) {
+    val context = LocalContext.current
+    val prefs = remember(context) {
+        context.getSharedPreferences("instagallery_settings", Context.MODE_PRIVATE)
+    }
     val pagerState = rememberPagerState(initialPage = startIndex, pageCount = { items.size })
     var playing by remember { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
+
+    LaunchedEffect(pagerState.currentPage, items) {
+        items.getOrNull(pagerState.currentPage)?.let { onPageViewed(it.uri) }
+    }
+
+    LaunchedEffect(pagerState.currentPage, autoPlayNext, loopMedia) {
+        val item = items.getOrNull(pagerState.currentPage) ?: return@LaunchedEffect
+        if (!item.isVideo && autoPlayNext && !loopMedia) {
+            val page = pagerState.currentPage
+            delay(5_000)
+            if (pagerState.currentPage == page && items.isNotEmpty()) {
+                pagerState.animateScrollToPage(if (page < items.lastIndex) page + 1 else 0)
+            }
+        }
+    }
+
     LaunchedEffect(pagerState.currentPage) { playing = true }
+
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        VerticalPager(state = pagerState, modifier = Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
+        VerticalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize(),
+            beyondViewportPageCount = 1
+        ) { page ->
             val item = items[page]
             if (item.isVideo) {
-                VideoPage(item, page == pagerState.currentPage, playing, onEnded = {
-                    scope.launch { pagerState.animateScrollToPage(if (pagerState.currentPage < items.lastIndex) pagerState.currentPage + 1 else 0) }
-                }, onTogglePlay = { playing = !playing })
+                VideoPage(
+                    item = item,
+                    active = page == pagerState.currentPage,
+                    playing = playing,
+                    autoPlayNext = autoPlayNext,
+                    loopMedia = loopMedia,
+                    rememberLastPlayed = rememberLastPlayed,
+                    onEnded = {
+                        if (autoPlayNext && !loopMedia) {
+                            scope.launch {
+                                val current = pagerState.currentPage
+                                pagerState.animateScrollToPage(if (current < items.lastIndex) current + 1 else 0)
+                            }
+                        }
+                    },
+                    onTogglePlay = { playing = !playing }
+                )
             } else {
-                AsyncImage(model = ImageRequest.Builder(LocalContext.current).data(item.uri).crossfade(false).build(), imageLoader = imageLoader, contentDescription = item.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                var zoom by remember(item.uri) { mutableStateOf(1f) }
+                var pan by remember(item.uri) { mutableStateOf(Offset.Zero) }
+                val transformState = rememberTransformableState { zoomChange, panChange, _ ->
+                    zoom = (zoom * zoomChange).coerceIn(1f, 5f)
+                    pan = if (zoom <= 1f) Offset.Zero else pan + panChange
+                }
+                AsyncImage(
+                    model = ImageRequest.Builder(context).data(item.uri).crossfade(false).build(),
+                    imageLoader = imageLoader,
+                    contentDescription = item.name,
+                    modifier = Modifier.fillMaxSize()
+                        .graphicsLayer(
+                            scaleX = zoom,
+                            scaleY = zoom,
+                            translationX = pan.x,
+                            translationY = pan.y
+                        )
+                        .transformable(state = transformState, canPan = { zoom > 1f }),
+                    contentScale = ContentScale.Fit
+                )
             }
         }
     }
 }
 
 @Composable
-private fun VideoPage(item: GalleryMedia, active: Boolean, playing: Boolean, onEnded: () -> Unit, onTogglePlay: () -> Unit) {
+private fun VideoPage(
+    item: GalleryMedia,
+    active: Boolean,
+    playing: Boolean,
+    autoPlayNext: Boolean,
+    loopMedia: Boolean,
+    rememberLastPlayed: Boolean,
+    onEnded: () -> Unit,
+    onTogglePlay: () -> Unit
+) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val player = remember(item.uri) {
+    val prefs = remember(context) {
+        context.getSharedPreferences("instagallery_settings", Context.MODE_PRIVATE)
+    }
+    val initialPositionMs = if (
+        rememberLastPlayed && prefs.getString("last_media_uri", null) == item.uri.toString()
+    ) prefs.getLong("last_playback_position", 0L) else 0L
+
+    val player = remember(item.uri, initialPositionMs) {
         ExoPlayer.Builder(context).build().apply {
             setMediaItem(MediaItem.fromUri(item.uri))
-            repeatMode = Player.REPEAT_MODE_OFF
+            if (initialPositionMs > 0L) seekTo(initialPositionMs)
+            repeatMode = if (loopMedia) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
             volume = 1f
             prepare()
         }
     }
+    var zoom by remember(item.uri) { mutableStateOf(1f) }
+    var pan by remember(item.uri) { mutableStateOf(Offset.Zero) }
+    var seekBarVisible by remember(item.uri) { mutableStateOf(false) }
+    var fastForwarding by remember(item.uri) { mutableStateOf(false) }
+    var currentPositionMs by remember(item.uri) { mutableStateOf(initialPositionMs) }
+    var durationMs by remember(item.uri) { mutableStateOf(item.durationMs.coerceAtLeast(0L)) }
+    val transformState = rememberTransformableState { zoomChange, panChange, _ ->
+        zoom = (zoom * zoomChange).coerceIn(1f, 5f)
+        pan = if (zoom <= 1f) Offset.Zero else pan + panChange
+    }
+
     DisposableEffect(player, lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE) player.pause()
             if (event == Lifecycle.Event.ON_RESUME && active) player.playWhenReady = true
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer); player.release() }
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            player.release()
+        }
     }
-    LaunchedEffect(active, playing) { player.volume = 1f; player.playWhenReady = active && playing }
-    DisposableEffect(player, active) {
+
+    LaunchedEffect(active, playing) {
+        player.volume = 1f
+        player.playWhenReady = active && playing
+    }
+
+    LaunchedEffect(loopMedia, player) {
+        player.repeatMode = if (loopMedia) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+    }
+
+    LaunchedEffect(player, active, rememberLastPlayed) {
+        while (active) {
+            currentPositionMs = player.currentPosition.coerceAtLeast(0L)
+            durationMs = player.duration.takeIf { it > 0L && it != androidx.media3.common.C.TIME_UNSET }
+                ?: item.durationMs.coerceAtLeast(0L)
+            if (rememberLastPlayed) {
+                prefs.edit()
+                    .putString("last_media_uri", item.uri.toString())
+                    .putLong("last_playback_position", currentPositionMs)
+                    .apply()
+            }
+            delay(1_000)
+        }
+    }
+
+    DisposableEffect(player, active, autoPlayNext, loopMedia) {
         val listener = object : Player.Listener {
-            override fun onPlaybackStateChanged(playbackState: Int) { if (playbackState == Player.STATE_ENDED && active) onEnded() }
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_ENDED && active && autoPlayNext && !loopMedia) onEnded()
+            }
         }
         player.addListener(listener)
         onDispose { player.removeListener(listener) }
     }
-    val exoPlayer = player
-    Box(Modifier.fillMaxSize().pointerInput(item.uri, active) { detectTapGestures(onTap = { if (active) onTogglePlay() }) }, contentAlignment = Alignment.Center) {
-        AndroidView(factory = { ctx -> PlayerView(ctx).apply { useController = false; this.player = exoPlayer; setShutterBackgroundColor(android.graphics.Color.BLACK) } },
-            update = { it.player = exoPlayer }, modifier = Modifier.fillMaxSize())
+
+    Box(
+        Modifier.fillMaxSize().background(Color.Black).pointerInput(item.uri, active, player) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                if (!active) return@awaitEachGesture
+
+                val downPosition = down.position
+                val pointerId = down.id
+                var didMove = false
+                var horizontalSeeking = false
+                var multiTouch = false
+                var holdTriggered = false
+                var finished = false
+
+                while (!finished) {
+                    val event = if (!didMove && !holdTriggered && !multiTouch) {
+                        withTimeoutOrNull(500L) { awaitPointerEvent() }
+                    } else {
+                        awaitPointerEvent()
+                    }
+
+                    if (event == null) {
+                        holdTriggered = true
+                        fastForwarding = true
+                        player.setPlaybackSpeed(2.0f)
+                        continue
+                    }
+
+                    if (event.changes.count { it.pressed } > 1) {
+                        multiTouch = true
+                        seekBarVisible = false
+                    }
+
+                    val change = event.changes.firstOrNull { it.id == pointerId }
+                    if (change == null || !change.pressed) {
+                        finished = true
+                        if (!multiTouch && !didMove && !holdTriggered) onTogglePlay()
+                        continue
+                    }
+
+                    if (multiTouch) continue
+
+                    val dx = change.position.x - downPosition.x
+                    val dy = change.position.y - downPosition.y
+                    if (!didMove && maxOf(kotlin.math.abs(dx), kotlin.math.abs(dy)) > viewConfiguration.touchSlop) {
+                        didMove = true
+                        if (kotlin.math.abs(dx) > kotlin.math.abs(dy)) {
+                            horizontalSeeking = true
+                            seekBarVisible = true
+                        }
+                    }
+
+                    if (horizontalSeeking) {
+                        val duration = player.duration.takeIf {
+                            it > 0L && it != androidx.media3.common.C.TIME_UNSET
+                        } ?: item.durationMs
+                        if (duration > 0L && size.width > 0) {
+                            val fraction = (change.position.x / size.width.toFloat()).coerceIn(0f, 1f)
+                            currentPositionMs = (duration * fraction).toLong()
+                            player.seekTo(currentPositionMs)
+                        }
+                        change.consume()
+                    }
+                }
+
+                if (holdTriggered) {
+                    player.setPlaybackSpeed(1.0f)
+                    fastForwarding = false
+                }
+                // The scrub bar disappears the moment the user's finger leaves the screen.
+                seekBarVisible = false
+            }
+        },
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            Modifier.fillMaxSize()
+                .graphicsLayer(
+                    scaleX = zoom,
+                    scaleY = zoom,
+                    translationX = pan.x,
+                    translationY = pan.y
+                )
+                .transformable(state = transformState, canPan = { zoom > 1f }),
+            contentAlignment = Alignment.Center
+        ) {
+            AndroidView(
+                factory = { ctx ->
+                    PlayerView(ctx).apply {
+                        useController = false
+                        player = this@VideoPage.player
+                        setShutterBackgroundColor(android.graphics.Color.BLACK)
+                    }
+                },
+                update = { it.player = player },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
+        if (fastForwarding) {
+            Surface(
+                color = Color(0xBB111111),
+                shape = MaterialTheme.shapes.large,
+                modifier = Modifier.align(Alignment.Center)
+            ) {
+                Text(
+                    "» 2×",
+                    color = Color.White,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp)
+                )
+            }
+        }
+
+        if (seekBarVisible) {
+            val safeDuration = durationMs.coerceAtLeast(1L)
+            Column(
+                Modifier.align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .background(Color(0xAA000000))
+                    .padding(horizontal = 18.dp, vertical = 14.dp)
+            ) {
+                Slider(
+                    value = (currentPositionMs.toFloat() / safeDuration.toFloat()).coerceIn(0f, 1f),
+                    onValueChange = { fraction ->
+                        currentPositionMs = (safeDuration * fraction).toLong()
+                        player.seekTo(currentPositionMs)
+                    },
+                    colors = SliderDefaults.colors(
+                        thumbColor = Color(0xFFFF4D7D),
+                        activeTrackColor = Color(0xFFFF4D7D),
+                        inactiveTrackColor = Color.LightGray
+                    )
+                )
+                Text(
+                    "${formatPlaybackTime(currentPositionMs)} / ${formatPlaybackTime(safeDuration)}",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    modifier = Modifier.align(Alignment.End)
+                )
+            }
+        }
     }
+}
+
+private fun formatPlaybackTime(millis: Long): String {
+    val totalSeconds = (millis.coerceAtLeast(0L) / 1_000L).toInt()
+    return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
 }
