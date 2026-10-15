@@ -23,6 +23,8 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.expandIn
 import androidx.compose.animation.shrinkOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideInVertically
@@ -692,8 +694,15 @@ private fun GalleryApp() {
         AnimatedContent(
             targetState = viewerStart.takeIf { visible.isNotEmpty() },
             transitionSpec = {
-                expandIn(expandFrom = Alignment.Center, animationSpec = tween(320, easing = FastOutSlowInEasing)) togetherWith
-                    shrinkOut(shrinkTowards = Alignment.Center, animationSpec = tween(220, easing = FastOutSlowInEasing))
+                scaleIn(
+                    initialScale = 0.82f,
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center,
+                    animationSpec = spring(dampingRatio = 0.82f, stiffness = 420f)
+                ) togetherWith scaleOut(
+                    targetScale = 0.96f,
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center,
+                    animationSpec = tween(160, easing = FastOutSlowInEasing)
+                )
             },
             label = "mediaViewerTransition"
         ) { animatedViewerStart ->
