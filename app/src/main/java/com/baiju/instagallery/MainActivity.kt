@@ -269,6 +269,7 @@ private fun GalleryApp() {
 
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         hasPermission = context.hasMediaPermission()
+        hasDocumentAccess = context.hasDocumentAccess()
     }
     val deleteLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
         media = context.queryGalleryMedia()
