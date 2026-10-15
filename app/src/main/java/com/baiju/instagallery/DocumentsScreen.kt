@@ -95,11 +95,10 @@ internal fun DocumentsScreen(
         }
     }
 
-    BackHandler(enabled = openedDocument != null || currentFolder.isNotBlank() || viewMode != "all") {
+    BackHandler(enabled = openedDocument != null || currentFolder.isNotBlank()) {
         when {
             openedDocument != null -> openedDocument = null
             currentFolder.isNotBlank() -> currentFolder = currentFolder.substringBeforeLast('/', "")
-            viewMode != "all" -> { viewMode = "all"; currentFolder = "" }
         }
     }
 
