@@ -166,7 +166,11 @@ private fun GalleryApp() {
             cancelTransfer()
             return
         }
-        val results = targets.map { context.copyMediaToFolder(it, destination.relativePath) }
+        val results = targets.map { item ->
+            // Android restricts top-level MediaStore folders. Keep the album name under an allowed media directory.
+            val safeRelativePath = context.safeDestinationPath(item, destination)
+            context.copyMediaToFolder(item, safeRelativePath)
+        }
         val copied = results.count { it.success }
         val firstError = results.firstOrNull { !it.success }?.error
         statusMessage = when {
@@ -405,6 +409,22 @@ private fun Context.queryGalleryMedia(): List<GalleryMedia> {
         } catch (_: SecurityException) {}
     }
     return result.distinctBy { it.uri }.sortedByDescending { it.dateAdded }
+}
+
+private fun Context.safeDestinationPath(item: GalleryMedia, destination: GalleryMedia): String {
+    val raw = destination.relativePath.trim().trim('/')
+    val parts = raw.split('/').filter { it.isNotBlank() }
+    val root = parts.firstOrNull().orEmpty()
+    val allowedRoots = if (item.isVideo) setOf("Movies", "DCIM", "Pictures") else setOf("DCIM", "Pictures")
+    return if (root in allowedRoots) {
+        "$raw/"
+    } else {
+        val safeRoot = if (item.isVideo) "Movies" else "Pictures"
+        // Preserve the chosen folder's visible album name without writing to a blocked top-level directory.
+        val folderName = destination.album.ifBlank { parts.lastOrNull() ?: "Copied" }
+            .replace("/", "_").replace("\\", "_").trim().ifBlank { "Copied" }
+        "$safeRoot/$folderName/"
+    }
 }
 
 private fun Context.copyMediaToFolder(item: GalleryMedia, relativePath: String): CopyResult {
