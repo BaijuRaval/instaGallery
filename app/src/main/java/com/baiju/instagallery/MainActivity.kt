@@ -20,8 +20,9 @@ import android.media.MediaScannerConnection
 import java.io.File
 import java.io.FileOutputStream
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -157,16 +158,9 @@ private fun BottomAction(
     }
 }
 
-private fun simpleZoomTransition() =
-    scaleIn(
-        initialScale = 0.92f,
-        transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center,
-        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing)
-    ) togetherWith scaleOut(
-        targetScale = 0.92f,
-        transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center,
-        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing)
-    )
+private fun simpleFadeTransition() =
+    fadeIn(animationSpec = tween(durationMillis = 180)) togetherWith
+        fadeOut(animationSpec = tween(durationMillis = 180))
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -191,6 +185,7 @@ private fun GalleryApp() {
     var media by remember { mutableStateOf(emptyList<GalleryMedia>()) }
     var selectedAlbum by remember { mutableStateOf("All media") }
     var viewerStartUri by rememberSaveable { mutableStateOf<Uri?>(null) }
+    var viewerDisplayUri by rememberSaveable { mutableStateOf<Uri?>(null) }
     var viewerCurrentUri by rememberSaveable { mutableStateOf<Uri?>(null) }
     var pendingGridScrollUri by remember { mutableStateOf<Uri?>(null) }
     var resumeHandled by remember { mutableStateOf(false) }
@@ -567,6 +562,7 @@ private fun GalleryApp() {
                 val lastUri = settingsPrefs.getString("last_media_uri", null)
                 if (lastUri != null && media.any { it.uri.toString() == lastUri }) {
                     viewerStartUri = Uri.parse(lastUri)
+                    viewerDisplayUri = Uri.parse(lastUri)
                     viewerCurrentUri = Uri.parse(lastUri)
                 }
             }
@@ -617,7 +613,7 @@ private fun GalleryApp() {
     SideEffect {
         val window = activity?.window ?: return@SideEffect
         val controller = WindowInsetsControllerCompat(window, window.decorView)
-        if (viewerStartUri != null) {
+        if (viewerDisplayUri != null) {
             controller.hide(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
             controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         } else {
@@ -657,7 +653,7 @@ private fun GalleryApp() {
     MaterialTheme(colorScheme = darkColorScheme(background = Color(0xFF101010), surface = Color(0xFF191919), primary = Color(0xFFFF4D7D))) {
         AnimatedContent(
             targetState = settingsPage,
-            transitionSpec = { simpleZoomTransition() },
+            transitionSpec = { simpleFadeTransition() },
             label = "settingsTransition"
         ) { targetSettingsPage ->
         if (targetSettingsPage != null) {
@@ -695,25 +691,28 @@ private fun GalleryApp() {
             )
         } else {
         val viewerStart = viewerStartUri
-        if (viewerStart != null && visible.isNotEmpty()) {
-            // Do not keep the old gallery grid alive behind the opening animation.
-            // An opaque black backing prevents old thumbnails showing around the zooming viewer.
-            val viewerScale = remember(viewerStart) { Animatable(0.92f) }
-            LaunchedEffect(viewerStart) {
-                viewerScale.animateTo(
-                    1f,
-                    animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing)
-                )
+        val viewerDisplay = viewerDisplayUri
+        if (viewerDisplay != null) {
+            // Keep the gallery out of composition until the fade-out finishes, preventing thumbnails
+            // from showing through around the viewer during close.
+            LaunchedEffect(viewerStart, viewerDisplay) {
+                if (viewerStart == null) {
+                    delay(220)
+                    if (viewerStartUri == null && viewerDisplayUri == viewerDisplay) {
+                        viewerDisplayUri = null
+                    }
+                }
             }
             Box(Modifier.fillMaxSize().background(Color.Black)) {
-                Box(
-                    Modifier.fillMaxSize().graphicsLayer {
-                        scaleX = viewerScale.value
-                        scaleY = viewerScale.value
-                        transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
-                    }
+                AnimatedVisibility(
+                    visible = viewerStart != null && visible.isNotEmpty(),
+                    modifier = Modifier.fillMaxSize(),
+                    enter = fadeIn(animationSpec = tween(180)),
+                    exit = fadeOut(animationSpec = tween(180))
                 ) {
-                    val startIndex = visible.indexOfFirst { it.uri == viewerStart }.coerceAtLeast(0)
+                    val startIndex = visible.indexOfFirst {
+                        it.uri == (viewerStart ?: viewerDisplay)
+                    }.coerceAtLeast(0)
                     ReelsViewer(
                         items = visible,
                         startIndex = startIndex,
@@ -996,6 +995,7 @@ private fun GalleryApp() {
                                                     selected = if (item.uri in current) current - item.uri else current + item.uri
                                                 } else {
                                                     viewerStartUri = item.uri
+                                                    viewerDisplayUri = item.uri
                                                 }
                                             }
                                         }
