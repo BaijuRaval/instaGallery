@@ -30,8 +30,6 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.ui.input.pointer.consume
-import androidx.compose.ui.geometry.getDistance
 import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -312,6 +310,12 @@ private fun GalleryApp() {
                                         selected = if (visible.isNotEmpty() && selected.size == visible.size) emptySet() else visible.map { it.uri }.toSet()
                                         actionMenu = false
                                     })
+                            }
+                            if (selected.isEmpty()) {
+                                DropdownMenuItem(text = { Text("Settings") }, leadingIcon = { Icon(Icons.Default.Settings, null) }, onClick = {
+                                    actionMenu = false
+                                    settingsOpen = true
+                                })
                             }
                             if (selected.isNotEmpty()) {
                             DropdownMenuItem(text = { Text("Share") }, leadingIcon = { Icon(Icons.Default.Share, null) }, onClick = { actionMenu = false; shareMedia(media.filter { it.uri in selected }) })
