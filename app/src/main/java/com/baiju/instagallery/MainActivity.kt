@@ -155,28 +155,12 @@ private fun GalleryApp() {
             return
         }
         val copied = targets.count { context.copyMediaToFolder(it, destination.relativePath) }
-        if (transferMode == "Move" && copied == targets.size) {
-            pendingTransferMessage = "Moved $copied item(s) to $folder."
-            try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    val request = MediaStore.createDeleteRequest(context.contentResolver, targets.map { it.uri })
-                    deleteLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
-                } else {
-                    targets.forEach { context.contentResolver.delete(it.uri, null, null) }
-                    refresh()
-                    statusMessage = "Moved $copied item(s) to $folder."
-                    pendingTransferMessage = null
-                }
-            } catch (_: Exception) {
-                statusMessage = "Files copied to $folder, but Android could not delete the originals."
-                pendingTransferMessage = null
-            }
-        } else {
-            statusMessage = if (transferMode == "Copy") {
-                "Copied $copied of ${targets.size} item(s) to $folder."
-            } else {
-                "Copied $copied of ${targets.size} item(s) to $folder. Originals were kept because not all files copied."
-            }
+        statusMessage = when {
+            copied == 0 -> "Nothing was copied. Check storage access and try again."
+            transferMode == "Copy" && copied == targets.size -> "Done! Copied $copied item(s) to $folder."
+            transferMode == "Copy" -> "Copied $copied of ${targets.size} item(s) to $folder. Please try again for the remaining items."
+            copied == targets.size -> "Copied to $folder. The original files are still in place because Android requires a separate confirmation before deleting them."
+            else -> "Copied $copied of ${targets.size} item(s) to $folder. Original files were kept to keep your media safe."
         }
         transferMode = null
         transferItems = emptyList()
@@ -393,18 +377,27 @@ private fun Context.queryGalleryMedia(): List<GalleryMedia> {
 private fun Context.copyMediaToFolder(item: GalleryMedia, relativePath: String): Boolean {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || relativePath.isBlank()) return false
     val collection = if (item.isVideo) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-    val values = android.content.ContentValues().apply {
-        put(MediaStore.MediaColumns.DISPLAY_NAME, item.name)
-        put(MediaStore.MediaColumns.MIME_TYPE, item.mimeType)
-        put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
-    }
+    var destinationUri: Uri? = null
     return try {
-        val dest = contentResolver.insert(collection, values) ?: return false
         val input = contentResolver.openInputStream(item.uri) ?: return false
-        val output = contentResolver.openOutputStream(dest) ?: return false
-        input.use { i -> output.use { o -> i.copyTo(o) } }
+        input.use { source ->
+            val values = android.content.ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, item.name)
+                put(MediaStore.MediaColumns.MIME_TYPE, item.mimeType)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+            destinationUri = contentResolver.insert(collection, values) ?: return false
+            val output = contentResolver.openOutputStream(destinationUri!!, "w") ?: throw IllegalStateException("Could not open destination")
+            output.use { target -> source.copyTo(target) }
+            val ready = android.content.ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+            contentResolver.update(destinationUri!!, ready, null, null)
+        }
         true
-    } catch (_: Exception) { false }
+    } catch (_: Exception) {
+        destinationUri?.let { uri -> try { contentResolver.delete(uri, null, null) } catch (_: Exception) {} }
+        false
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
