@@ -70,6 +70,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -1392,11 +1393,14 @@ private fun ReelsViewer(
                 var zoom by remember(item.uri) { mutableFloatStateOf(1f) }
                 var pan by remember(item.uri) { mutableStateOf(Offset.Zero) }
                 var rotation by remember(item.uri) { mutableFloatStateOf(0f) }
+                var viewportSize by remember(item.uri) { mutableStateOf(IntSize.Zero) }
+                val rotationFit = calculateRotationFitScale(viewportSize.width, viewportSize.height, rotation)
                 AsyncImage(
                     model = ImageRequest.Builder(context).data(item.uri).crossfade(false).build(),
                     imageLoader = imageLoader,
                     contentDescription = item.name,
                     modifier = Modifier.fillMaxSize()
+                        .onSizeChanged { viewportSize = it }
                         .pointerInput(item.uri) {
                             awaitEachGesture {
                                 awaitFirstDown(requireUnconsumed = false)
@@ -1440,8 +1444,8 @@ private fun ReelsViewer(
                             }
                         }
                         .graphicsLayer(
-                            scaleX = zoom,
-                            scaleY = zoom,
+                            scaleX = zoom * rotationFit,
+                            scaleY = zoom * rotationFit,
                             translationX = pan.x,
                             translationY = pan.y,
                             rotationZ = rotation,
@@ -1487,6 +1491,8 @@ private fun VideoPage(
     var zoom by remember(item.uri) { mutableFloatStateOf(1f) }
     var pan by remember(item.uri) { mutableStateOf(Offset.Zero) }
     var rotation by remember(item.uri) { mutableFloatStateOf(0f) }
+    var viewportSize by remember(item.uri) { mutableStateOf(IntSize.Zero) }
+    val rotationFit = calculateRotationFitScale(viewportSize.width, viewportSize.height, rotation)
     var seekBarVisible by remember(item.uri) { mutableStateOf(false) }
     var fastForwarding by remember(item.uri) { mutableStateOf(false) }
     var currentPositionMs by remember(item.uri) { mutableLongStateOf(initialPositionMs) }
@@ -1675,9 +1681,9 @@ private fun VideoPage(
             update = {
                 it.player = exoPlayer
             },
-            modifier = Modifier.fillMaxSize().graphicsLayer(
-                scaleX = zoom,
-                scaleY = zoom,
+            modifier = Modifier.fillMaxSize().onSizeChanged { viewportSize = it }.graphicsLayer(
+                scaleX = zoom * rotationFit,
+                scaleY = zoom * rotationFit,
                 translationX = pan.x,
                 translationY = pan.y,
                 rotationZ = rotation,
@@ -1729,6 +1735,16 @@ private fun VideoPage(
             }
         }
     }
+}
+
+private fun calculateRotationFitScale(width: Int, height: Int, rotationDegrees: Float): Float {
+    if (width <= 0 || height <= 0) return 1f
+    val radians = Math.toRadians(rotationDegrees.toDouble())
+    val cos = kotlin.math.abs(kotlin.math.cos(radians))
+    val sin = kotlin.math.abs(kotlin.math.sin(radians))
+    val rotatedWidth = width * cos + height * sin
+    val rotatedHeight = height * cos + width * sin
+    return minOf(width / rotatedWidth, height / rotatedHeight).toFloat().coerceIn(0.01f, 1f)
 }
 
 private fun calculateRotationDelta(
