@@ -845,13 +845,6 @@ private fun SettingsScreen(
     }
 }
 
-@Composable
-private fun rememberThumbnailRequest(context: Context, item: GalleryMedia): ImageRequest = remember(
-    item.uri, item.size, item.dateAdded, item.thumbnailTimeMs
-) {
-    thumbnailRequest(context, item)
-}
-
 private const val THUMBNAIL_MAX_SIZE = 512
 
 // filesDir (not cacheDir) keeps generated thumbnail JPEGs across app launches.
