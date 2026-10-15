@@ -292,17 +292,18 @@ private fun GalleryApp() {
                             else -> "${visible.size} items"
                         }, color = Color.LightGray, fontSize = 12.sp)
                     }
-                    Box {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                         IconButton(onClick = {
                             if (selected.isNotEmpty()) shareMedia(media.filter { it.uri in selected })
                             else statusMessage = "Long-press a photo or video to select it, then tap Share."
                         }) {
                             Icon(Icons.Default.Share, "Share selected media", tint = Color.White)
                         }
-                        IconButton(onClick = { actionMenu = true }) {
-                            Icon(Icons.Default.MoreVert, "More options", tint = Color.White)
-                        }
-                        DropdownMenu(expanded = actionMenu, onDismissRequest = { actionMenu = false }) {
+                        Box {
+                            IconButton(onClick = { actionMenu = true }) {
+                                Icon(Icons.Default.MoreVert, "More options", tint = Color.White)
+                            }
+                            DropdownMenu(expanded = actionMenu, onDismissRequest = { actionMenu = false }) {
                             if (tab == "Reel" || selectedAlbum != "All media") {
                                 DropdownMenuItem(text = { Text(if (visible.isNotEmpty() && selected.size == visible.size) "Deselect all" else "Select all") },
                                     leadingIcon = { Icon(Icons.Default.Collections, null) },
@@ -332,6 +333,7 @@ private fun GalleryApp() {
                             })
                             DropdownMenuItem(text = { Text("Delete") }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = Color(0xFFFF6680)) }, onClick = { actionMenu = false; deleteMedia(media.filter { it.uri in selected }) })
                             }
+                        }
                         }
                     }
                 }
