@@ -767,7 +767,7 @@ private fun GalleryApp() {
                         selectedFolder != null -> "folder" to selectedFolder
                         else -> "normal" to null
                     },
-                    transitionSpec = { simpleZoomTransition() },
+                    transitionSpec = { simpleFadeTransition() },
                     modifier = Modifier.fillMaxWidth(),
                     label = "headerActionTransition"
                 ) { headerTarget ->
@@ -822,7 +822,7 @@ private fun GalleryApp() {
                 }
                 AnimatedContent(
                     targetState = tab to selectedAlbum,
-                    transitionSpec = { simpleZoomTransition() },
+                    transitionSpec = { simpleFadeTransition() },
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     contentAlignment = Alignment.Center,
                     label = "galleryContentTransition"
@@ -1053,7 +1053,7 @@ private fun GalleryApp() {
                         selectedFolder != null -> "folder" to selectedFolder
                         else -> "tabs" to null
                     },
-                    transitionSpec = { simpleZoomTransition() },
+                    transitionSpec = { simpleFadeTransition() },
                     modifier = Modifier.fillMaxWidth(),
                     label = "bottomActionTransition"
                 ) { footerTarget ->
