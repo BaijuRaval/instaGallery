@@ -76,6 +76,7 @@ import java.util.Date
 private data class GalleryMedia(val uri: Uri, val name: String, val mimeType: String, val album: String, val dateAdded: Long, val size: Long, val relativePath: String) {
     val isVideo: Boolean get() = mimeType.startsWith("video/")
 }
+private data class CopyResult(val success: Boolean, val error: String? = null)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -165,13 +166,15 @@ private fun GalleryApp() {
             cancelTransfer()
             return
         }
-        val copied = targets.count { context.copyMediaToFolder(it, destination.relativePath) }
+        val results = targets.map { context.copyMediaToFolder(it, destination.relativePath) }
+        val copied = results.count { it.success }
+        val firstError = results.firstOrNull { !it.success }?.error
         statusMessage = when {
-            copied == 0 -> "Nothing was copied. Check storage access and try again."
+            copied == 0 -> "Couldn't copy to $folder. $firstError"
             transferMode == "Copy" && copied == targets.size -> "Done! Copied $copied item(s) to $folder."
-            transferMode == "Copy" -> "Copied $copied of ${targets.size} item(s) to $folder. Please try again for the remaining items."
-            copied == targets.size -> "Copied to $folder. The original files are still in place because Android requires a separate confirmation before deleting them."
-            else -> "Copied $copied of ${targets.size} item(s) to $folder. Original files were kept to keep your media safe."
+            transferMode == "Copy" -> "Copied $copied of ${targets.size} item(s) to $folder. One file failed: $firstError"
+            copied == targets.size -> "Copied to $folder. Original files are still in place because Android requires a separate confirmation before deleting them."
+            else -> "Copied $copied of ${targets.size} item(s) to $folder. Originals were kept. Error: $firstError"
         }
         transferMode = null
         transferItems = emptyList()
@@ -404,48 +407,81 @@ private fun Context.queryGalleryMedia(): List<GalleryMedia> {
     return result.distinctBy { it.uri }.sortedByDescending { it.dateAdded }
 }
 
-private fun Context.copyMediaToFolder(item: GalleryMedia, relativePath: String): Boolean {
-    if (relativePath.isBlank()) return false
+private fun Context.copyMediaToFolder(item: GalleryMedia, relativePath: String): CopyResult {
+    if (relativePath.isBlank()) return CopyResult(false, "Destination folder path is empty.")
+
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
         return try {
             val folder = File(relativePath)
-            if (!folder.exists() && !folder.mkdirs()) return false
+            if (!folder.exists() && !folder.mkdirs()) return CopyResult(false, "Cannot create the destination folder.")
             val baseName = item.name.substringBeforeLast('.', item.name)
             val extension = item.name.substringAfterLast('.', "")
             var outputFile = File(folder, item.name)
             var suffix = 1
             while (outputFile.exists()) {
-                val name = if (extension.isBlank()) "$baseName ($suffix)" else "$baseName ($suffix).$extension"
+                val name = if (extension.isBlank()) "$baseName (copy $suffix)" else "$baseName (copy $suffix).$extension"
                 outputFile = File(folder, name)
                 suffix++
             }
-            val input = contentResolver.openInputStream(item.uri) ?: return false
+            val input = contentResolver.openInputStream(item.uri)
+                ?: return CopyResult(false, "Android couldn't read the original file.")
             input.use { source -> FileOutputStream(outputFile).use { target -> source.copyTo(target) } }
             MediaScannerConnection.scanFile(this, arrayOf(outputFile.absolutePath), arrayOf(item.mimeType), null)
-            true
-        } catch (_: Exception) { false }
+            CopyResult(true)
+        } catch (e: SecurityException) {
+            CopyResult(false, "Storage permission denied. Allow photo, video and file access in Android Settings.")
+        } catch (e: Exception) {
+            CopyResult(false, e.localizedMessage ?: e.javaClass.simpleName)
+        }
     }
+
     val collection = if (item.isVideo) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+    val normalizedPath = relativePath.trimStart('/').let { if (it.endsWith("/")) it else "$it/" }
     var destinationUri: Uri? = null
     return try {
-        val input = contentResolver.openInputStream(item.uri) ?: return false
+        val input = contentResolver.openInputStream(item.uri)
+            ?: return CopyResult(false, "Android couldn't read the original file. Check media permission.")
         input.use { source ->
+            val baseName = item.name.substringBeforeLast('.', item.name)
+            val extension = item.name.substringAfterLast('.', "")
+            var outputName = item.name
+            var suffix = 1
+            fun nameExists(candidate: String): Boolean {
+                return contentResolver.query(
+                    collection,
+                    arrayOf(MediaStore.MediaColumns._ID),
+                    "${MediaStore.MediaColumns.RELATIVE_PATH}=? AND ${MediaStore.MediaColumns.DISPLAY_NAME}=?",
+                    arrayOf(normalizedPath, candidate),
+                    null
+                )?.use { it.moveToFirst() } == true
+            }
+            while (nameExists(outputName)) {
+                outputName = if (extension.isBlank()) "$baseName (copy $suffix)" else "$baseName (copy $suffix).$extension"
+                suffix++
+                if (suffix > 1000) throw IllegalStateException("Too many files with the same name in this folder.")
+            }
             val values = android.content.ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, item.name)
-                put(MediaStore.MediaColumns.MIME_TYPE, item.mimeType)
-                put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
+                put(MediaStore.MediaColumns.DISPLAY_NAME, outputName)
+                put(MediaStore.MediaColumns.MIME_TYPE, item.mimeType.ifBlank { if (item.isVideo) "video/mp4" else "image/jpeg" })
+                put(MediaStore.MediaColumns.RELATIVE_PATH, normalizedPath)
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
             }
-            destinationUri = contentResolver.insert(collection, values) ?: return false
-            val output = contentResolver.openOutputStream(destinationUri!!, "w") ?: throw IllegalStateException("Could not open destination")
+            destinationUri = contentResolver.insert(collection, values)
+                ?: throw IllegalStateException("Android refused to create a file in this folder. Try another folder.")
+            val output = contentResolver.openOutputStream(destinationUri!!, "w")
+                ?: throw IllegalStateException("Android couldn't open the new file for writing.")
             output.use { target -> source.copyTo(target) }
             val ready = android.content.ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
-            contentResolver.update(destinationUri!!, ready, null, null)
+            val updated = contentResolver.update(destinationUri!!, ready, null, null)
+            if (updated <= 0) throw IllegalStateException("Android couldn't finish saving the copied file.")
         }
-        true
-    } catch (_: Exception) {
+        CopyResult(true)
+    } catch (e: SecurityException) {
         destinationUri?.let { uri -> try { contentResolver.delete(uri, null, null) } catch (_: Exception) {} }
-        false
+        CopyResult(false, "Android denied access to the source or destination folder. Try a regular Pictures/DCIM folder or check media permission.")
+    } catch (e: Exception) {
+        destinationUri?.let { uri -> try { contentResolver.delete(uri, null, null) } catch (_: Exception) {} }
+        CopyResult(false, e.localizedMessage ?: e.javaClass.simpleName)
     }
 }
 
