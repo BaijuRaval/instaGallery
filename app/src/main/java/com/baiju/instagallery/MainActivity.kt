@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
 import android.provider.Settings
+import android.view.LayoutInflater
 import android.media.MediaScannerConnection
 import java.io.File
 import java.io.FileOutputStream
@@ -1664,9 +1665,8 @@ private fun VideoPage(
     ) {
         AndroidView(
             factory = { ctx ->
-                PlayerView(ctx).apply {
-                    useController = false
-                    this.player = exoPlayer
+                (LayoutInflater.from(ctx).inflate(R.layout.player_view_texture, null, false) as PlayerView).apply {
+                    player = exoPlayer
                     setShutterBackgroundColor(android.graphics.Color.BLACK)
                     isClickable = false
                     isFocusable = false
