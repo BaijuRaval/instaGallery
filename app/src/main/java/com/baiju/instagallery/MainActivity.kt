@@ -1396,7 +1396,11 @@ private fun ReelsViewer(
                 !pagerState.isScrollInProgress &&
                 !currentMediaZoomed
             ) {
-                pagerState.animateScrollToPage(if (page < items.lastIndex) page + 1 else 0)
+                // Run scrolling in the remembered UI scope so this effect being restarted
+                // when currentPage changes cannot cancel the animation halfway through.
+                scope.launch {
+                    pagerState.animateScrollToPage(if (page < items.lastIndex) page + 1 else 0)
+                }
             }
         }
     }
