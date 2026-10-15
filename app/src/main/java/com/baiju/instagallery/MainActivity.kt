@@ -61,7 +61,9 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
+import coil.ImageLoader
 import coil.compose.AsyncImage
+import coil.decode.VideoFrameDecoder
 import coil.request.ImageRequest
 import coil.request.videoFrameMillis
 import kotlinx.coroutines.launch
@@ -98,6 +100,7 @@ private fun GalleryApp() {
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var settingsOpen by remember { mutableStateOf(false) }
     var albumMenu by remember { mutableStateOf(false) }
+    var actionMenu by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         hasPermission = context.hasMediaPermission()
@@ -166,33 +169,33 @@ private fun GalleryApp() {
                         Text(if (selected.isNotEmpty()) "${selected.size} selected" else "instaGallery", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
                         Text("${visible.size} items", color = Color.LightGray, fontSize = 12.sp)
                     }
-                    IconButton(onClick = { settingsOpen = true }) { Icon(Icons.Default.Settings, "Settings", tint = Color.White) }
-                }
-                if (selected.isNotEmpty()) {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = { shareMedia(media.filter { it.uri in selected }) }) { Icon(Icons.Default.Share, null); Text("Share") }
-                        TextButton(onClick = {
-                            val first = media.firstOrNull { it.uri in selected }
-                            if (first != null) { infoItem = first }
-                        }) { Icon(Icons.Default.Info, null); Text("Details") }
-                        TextButton(onClick = {
-                            val first = media.firstOrNull { it.uri in selected }
-                            if (first != null) { renameItem = first; renameText = first.name }
-                        }) { Icon(Icons.Default.Edit, null); Text("Rename") }
-                        TextButton(onClick = {
-                            val targets = media.filter { it.uri in selected }
-                            val count = targets.count { context.copyMediaToGallery(it) }
-                            statusMessage = "Copied $count of ${targets.size} items to instaGallery"
-                            refresh()
-                        }) { Icon(Icons.Default.ContentCopy, null); Text("Copy") }
-                        TextButton(onClick = {
-                            val targets = media.filter { it.uri in selected }
-                            val count = targets.count { context.copyMediaToGallery(it) }
-                            if (count == targets.size) deleteMedia(targets)
-                            else statusMessage = "Copied $count of ${targets.size}; originals kept for safety"
-                            refresh()
-                        }) { Icon(Icons.Default.DriveFileMove, null); Text("Move") }
-                        IconButton(onClick = { deleteMedia(media.filter { it.uri in selected }) }) { Icon(Icons.Default.Delete, "Delete", tint = Color(0xFFFF6680)) }
+                    Box {
+                        IconButton(onClick = { if (selected.isNotEmpty()) actionMenu = true else settingsOpen = true }) {
+                            Icon(if (selected.isNotEmpty()) Icons.Default.MoreVert else Icons.Default.Settings,
+                                if (selected.isNotEmpty()) "Selection options" else "Settings", tint = Color.White)
+                        }
+                        DropdownMenu(expanded = actionMenu && selected.isNotEmpty(), onDismissRequest = { actionMenu = false }) {
+                            DropdownMenuItem(text = { Text("Share") }, leadingIcon = { Icon(Icons.Default.Share, null) }, onClick = { actionMenu = false; shareMedia(media.filter { it.uri in selected }) })
+                            DropdownMenuItem(text = { Text("Details") }, leadingIcon = { Icon(Icons.Default.Info, null) }, onClick = { actionMenu = false; media.firstOrNull { it.uri in selected }?.let { infoItem = it } })
+                            DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Default.Edit, null) }, onClick = { actionMenu = false; media.firstOrNull { it.uri in selected }?.let { renameItem = it; renameText = it.name } })
+                            DropdownMenuItem(text = { Text("Copy") }, leadingIcon = { Icon(Icons.Default.ContentCopy, null) }, onClick = {
+                                actionMenu = false
+                                val targets = media.filter { it.uri in selected }
+                                val count = targets.count { context.copyMediaToGallery(it) }
+                                statusMessage = "Copied $count of ${targets.size} items to instaGallery"
+                                refresh()
+                            })
+                            DropdownMenuItem(text = { Text("Move") }, leadingIcon = { Icon(Icons.Default.DriveFileMove, null) }, onClick = {
+                                actionMenu = false
+                                val targets = media.filter { it.uri in selected }
+                                val count = targets.count { context.copyMediaToGallery(it) }
+                                if (count == targets.size) deleteMedia(targets)
+                                else statusMessage = "Copied $count of ${targets.size}; originals kept for safety"
+                                refresh()
+                            })
+                            DropdownMenuItem(text = { Text("Delete") }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = Color(0xFFFF6680)) }, onClick = { actionMenu = false; deleteMedia(media.filter { it.uri in selected }) })
+                            DropdownMenuItem(text = { Text("Cancel selection") }, onClick = { actionMenu = false; selected = emptySet() })
+                        }
                     }
                 }
                 when {
@@ -204,6 +207,19 @@ private fun GalleryApp() {
                         }
                     }
                     visible.isEmpty() -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { Text("No photos or videos found", color = Color.LightGray) }
+                    tab == "Folders" && selectedAlbum == "All media" -> {
+                        val folders = media.groupBy { it.album }.toSortedMap()
+                        if (folders.isEmpty()) {
+                            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { Text("No folders found", color = Color.LightGray) }
+                        } else {
+                            LazyVerticalGrid(columns = GridCells.Fixed(2), modifier = Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                items(folders.keys.toList(), key = { it }) { folder ->
+                                    val folderItems = folders[folder].orEmpty()
+                                    FolderTile(folder, folderItems, onClick = { selectedAlbum = folder })
+                                }
+                            }
+                        }
+                    }
                     else -> LazyVerticalGrid(columns = GridCells.Fixed(3), modifier = Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(2.dp), horizontalArrangement = Arrangement.spacedBy(2.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         items(visible, key = { it.uri.toString() }) { item ->
                             val isSelected = item.uri in selected
@@ -308,13 +324,45 @@ private fun Context.copyMediaToGallery(item: GalleryMedia): Boolean {
     } catch (_: Exception) { false }
 }
 
+@Composable
+private fun FolderTile(name: String, items: List<GalleryMedia>, onClick: () -> Unit) {
+    val context = LocalContext.current
+    val cover = items.firstOrNull()
+    val videoImageLoader = remember(context) {
+        ImageLoader.Builder(context).components { add(VideoFrameDecoder.Factory()) }.crossfade(true).build()
+    }
+    Column(
+        Modifier.fillMaxWidth().background(Color(0xFF191919), MaterialTheme.shapes.medium).combinedClickable(onClick = onClick, onLongClick = onClick)
+    ) {
+        Box(Modifier.fillMaxWidth().aspectRatio(1.15f).background(Color.DarkGray)) {
+            if (cover != null) {
+                AsyncImage(
+                    model = ImageRequest.Builder(context).data(cover.uri).apply { if (cover.isVideo) videoFrameMillis(0) }.crossfade(true).build(),
+                    imageLoader = videoImageLoader,
+                    contentDescription = "$name folder preview",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                Icon(Icons.Default.Folder, null, tint = Color.LightGray, modifier = Modifier.align(Alignment.Center).size(48.dp))
+            }
+            Icon(Icons.Default.Folder, null, tint = Color.White, modifier = Modifier.align(Alignment.TopStart).padding(8.dp).size(24.dp))
+        }
+        Text(name, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 10.dp, end = 10.dp, top = 8.dp))
+        Text("${items.size} items", color = Color.LightGray, fontSize = 12.sp, modifier = Modifier.padding(start = 10.dp, end = 10.dp, bottom = 10.dp, top = 2.dp))
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MediaThumbnail(item: GalleryMedia, selected: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
     val context = LocalContext.current
+    val videoImageLoader = remember(context) {
+        ImageLoader.Builder(context).components { add(VideoFrameDecoder.Factory()) }.crossfade(true).build()
+    }
     Box(Modifier.aspectRatio(0.78f).background(if (selected) Color(0xFF503040) else Color.DarkGray).combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
-        AsyncImage(model = ImageRequest.Builder(context).data(item.uri).apply { if (item.isVideo) videoFrameMillis(1000) }.crossfade(true).build(),
-            contentDescription = item.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        AsyncImage(model = ImageRequest.Builder(context).data(item.uri).apply { if (item.isVideo) videoFrameMillis(0) }.crossfade(true).build(),
+            imageLoader = videoImageLoader, contentDescription = item.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         if (item.isVideo) Icon(Icons.Default.PlayArrow, "Video", tint = Color.White, modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(24.dp))
         if (selected) Box(Modifier.fillMaxSize().background(Color(0x6633A6FF)), contentAlignment = Alignment.TopEnd) {
             Text("✓", color = Color.White, fontSize = 22.sp, modifier = Modifier.padding(5.dp))
