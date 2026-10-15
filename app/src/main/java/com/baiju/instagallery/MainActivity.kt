@@ -151,7 +151,7 @@ private fun Context.queryGalleryMedia(): List<GalleryMedia> {
             MediaStore.MediaColumns.DISPLAY_NAME,
             MediaStore.MediaColumns.MIME_TYPE,
             MediaStore.MediaColumns.DATE_ADDED,
-            MediaStore.MediaColumns.BUCKET_DISPLAY_NAME
+            "bucket_display_name"
         )
         try {
             contentResolver.query(
@@ -162,7 +162,7 @@ private fun Context.queryGalleryMedia(): List<GalleryMedia> {
                 val nameCol = cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
                 val mimeCol = cursor.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE)
                 val dateCol = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_ADDED)
-                val albumCol = cursor.getColumnIndex(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
+                val albumCol = cursor.getColumnIndex("bucket_display_name")
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idCol)
                     val name = if (nameCol >= 0) cursor.getString(nameCol) ?: "Media" else "Media"
