@@ -788,6 +788,7 @@ private fun GalleryApp() {
                 onRequestAccess = ::requestDocumentsAccess,
                 initialViewMode = if (documentFolderMode) "folders" else "all",
                 onDocumentOpenChanged = { documentViewerOpen = it },
+                onOpenMenu = { mainMenuOpen = true },
                 onBack = {
                     documentViewerOpen = false
                     tab = if (menuScope == "Folder") "Folders" else "Reel"
