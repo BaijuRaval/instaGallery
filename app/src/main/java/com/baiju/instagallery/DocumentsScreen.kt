@@ -1,9 +1,13 @@
 package com.baiju.instagallery
 
 import android.content.Context
+import android.database.Cursor
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
@@ -32,7 +36,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
@@ -41,11 +44,16 @@ import java.nio.charset.StandardCharsets
 import java.util.zip.ZipInputStream
 
 private data class BrowserDocument(
-    val uri: Uri, val name: String, val mimeType: String, val relativePath: String,
-    val size: Long, val modified: Long, val isDirectory: Boolean
+    val uri: Uri,
+    val name: String,
+    val mimeType: String,
+    val relativePath: String,
+    val size: Long,
+    val modified: Long,
+    val isDirectory: Boolean
 ) {
     val extension: String get() = name.substringAfterLast('.', "").lowercase()
-    val displayPath: String get() = if (relativePath.isBlank()) name else relativePath + "/" + name
+    val displayPath: String get() = if (relativePath.isBlank()) name else "$relativePath/$name"
 }
 
 private val supportedDocumentExtensions = setOf(
@@ -54,23 +62,29 @@ private val supportedDocumentExtensions = setOf(
 )
 
 @Composable
-internal fun DocumentsScreen(treeUri: Uri?, onChooseFolder: () -> Unit, onBack: () -> Unit) {
+internal fun DocumentsScreen(
+    hasAccess: Boolean,
+    onRequestAccess: () -> Unit,
+    onBack: () -> Unit
+) {
     val context = LocalContext.current
-    var documents by remember(treeUri) { mutableStateOf(emptyList<BrowserDocument>()) }
-    var loading by remember(treeUri) { mutableStateOf(treeUri != null) }
-    var scanError by remember(treeUri) { mutableStateOf<String?>(null) }
-    var viewMode by remember(treeUri) { mutableStateOf("all") }
-    var currentFolder by remember(treeUri) { mutableStateOf("") }
+    var documents by remember { mutableStateOf(emptyList<BrowserDocument>()) }
+    var loading by remember { mutableStateOf(false) }
+    var scanError by remember { mutableStateOf<String?>(null) }
+    var scanRevision by remember { mutableIntStateOf(0) }
+    var viewMode by remember { mutableStateOf("all") }
+    var currentFolder by remember { mutableStateOf("") }
     var openedDocument by remember { mutableStateOf<BrowserDocument?>(null) }
 
-    LaunchedEffect(treeUri) {
-        documents = emptyList()
-        currentFolder = ""
-        viewMode = "all"
-        scanError = null
-        if (treeUri == null) loading = false else {
+    LaunchedEffect(hasAccess, scanRevision) {
+        if (!hasAccess) {
+            documents = emptyList()
+            loading = false
+            scanError = null
+        } else {
             loading = true
-            val result = withContext(Dispatchers.IO) { scanDocumentTree(context, treeUri) }
+            scanError = null
+            val result = withContext(Dispatchers.IO) { scanDocuments(context) }
             documents = result.first
             scanError = result.second
             loading = false
@@ -94,29 +108,31 @@ internal fun DocumentsScreen(treeUri: Uri?, onChooseFolder: () -> Unit, onBack: 
     Column(Modifier.fillMaxSize().background(Color(0xFF101010)).statusBarsPadding().navigationBarsPadding()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = {
-                if (currentFolder.isNotBlank()) currentFolder = currentFolder.substringBeforeLast('/', "") else onBack()
+                if (currentFolder.isNotBlank()) currentFolder = currentFolder.substringBeforeLast('/', "")
+                else onBack()
             }) { Icon(Icons.Default.ArrowBack, "Back", tint = Color.White) }
             Column(Modifier.weight(1f)) {
                 Text(if (currentFolder.isBlank()) "Documents" else currentFolder.substringAfterLast('/'),
                     color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(if (treeUri == null) "Choose a folder to begin" else documents.count { !it.isDirectory }.toString() + " documents",
+                Text(if (!hasAccess) "Automatic document scan" else documents.count { !it.isDirectory }.toString() + " documents",
                     color = Color.LightGray, fontSize = 12.sp)
             }
-            if (treeUri != null) TextButton(onClick = onChooseFolder) { Text("Change folder") }
         }
 
-        if (treeUri == null) {
-            Box(Modifier.fillMaxSize().padding(28.dp), contentAlignment = Alignment.Center) {
+        if (!hasAccess) {
+            Box(Modifier.fillMaxSize().padding(26.dp), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(Icons.Default.Folder, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(62.dp))
                     Spacer(Modifier.height(16.dp))
-                    Text("Choose a documents folder", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Scan documents automatically", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(8.dp))
-                    Text("Select Documents, Downloads, or another folder. Supported files in it and its subfolders will appear here.",
-                        color = Color.LightGray, fontSize = 14.sp)
+                    Text(
+                        "No folder picker. Allow instaGallery to access files once in Android Settings; then PDF, Word, Excel, PowerPoint and text documents will be scanned automatically.",
+                        color = Color.LightGray, fontSize = 14.sp
+                    )
                     Spacer(Modifier.height(18.dp))
-                    Button(onClick = onChooseFolder) { Text("Choose folder") }
+                    Button(onClick = onRequestAccess) { Text("Allow file access") }
                 }
             }
         } else {
@@ -127,7 +143,7 @@ internal fun DocumentsScreen(treeUri: Uri?, onChooseFolder: () -> Unit, onBack: 
                 FilterChip(selected = viewMode == "folders", onClick = { viewMode = "folders" },
                     label = { Text("Folders") })
                 Spacer(Modifier.weight(1f))
-                TextButton(onClick = onChooseFolder) { Text("Open folder") }
+                TextButton(onClick = { scanRevision++ }) { Text("Rescan") }
             }
             when {
                 loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -136,7 +152,8 @@ internal fun DocumentsScreen(treeUri: Uri?, onChooseFolder: () -> Unit, onBack: 
                 scanError != null -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(scanError.orEmpty(), color = Color.White)
-                        Button(onClick = onChooseFolder) { Text("Choose folder again") }
+                        Spacer(Modifier.height(12.dp))
+                        Button(onClick = { scanRevision++ }) { Text("Try again") }
                     }
                 }
                 else -> {
@@ -146,8 +163,9 @@ internal fun DocumentsScreen(treeUri: Uri?, onChooseFolder: () -> Unit, onBack: 
                     }.sortedBy { it.name.lowercase() }
                     val currentFiles = documents.filter { !it.isDirectory && it.relativePath == currentFolder }
                         .sortedBy { it.name.lowercase() }
+
                     if (viewMode == "all") {
-                        if (allFiles.isEmpty()) EmptyDocumentsMessage("No supported documents found in this folder.")
+                        if (allFiles.isEmpty()) EmptyDocumentsMessage("No supported documents found on this device.")
                         else LazyVerticalGrid(columns = GridCells.Fixed(2), modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -158,7 +176,7 @@ internal fun DocumentsScreen(treeUri: Uri?, onChooseFolder: () -> Unit, onBack: 
                     } else {
                         val entries = childFolders + currentFiles
                         if (entries.isEmpty()) EmptyDocumentsMessage(
-                            if (currentFolder.isBlank()) "No folders or supported documents found."
+                            if (currentFolder.isBlank()) "No document folders or supported files found."
                             else "This folder has no subfolders or supported documents.")
                         else LazyVerticalGrid(columns = GridCells.Fixed(2), modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -218,39 +236,84 @@ private fun DocumentTile(document: BrowserDocument, showPath: Boolean, onClick: 
     }
 }
 
-private fun scanDocumentTree(context: Context, treeUri: Uri): Pair<List<BrowserDocument>, String?> {
+private fun scanDocuments(context: Context): Pair<List<BrowserDocument>, String?> {
     return try {
-        val root = DocumentFile.fromTreeUri(context, treeUri)
-            ?: return emptyList<BrowserDocument>() to "Could not open the selected folder. Please choose it again."
-        if (!root.exists() || !root.canRead()) return emptyList<BrowserDocument>() to
-            "The selected folder is no longer accessible. Choose it again."
-        val found = mutableListOf<BrowserDocument>()
-        fun visit(folder: DocumentFile, path: String, depth: Int) {
-            if (depth > 12) return
-            val children = try { folder.listFiles().sortedBy { (it.name ?: "").lowercase() } }
-                catch (_: Exception) { emptyList() }
-            children.forEach { child ->
-                val name = child.name ?: return@forEach
-                if (child.isDirectory) {
-                    val childPath = if (path.isBlank()) name else path + "/" + name
-                    found.add(BrowserDocument(child.uri, name, "inode/directory", childPath, 0L, child.lastModified(), true))
-                    visit(child, childPath, depth + 1)
-                } else {
-                    val ext = name.substringAfterLast('.', "").lowercase()
-                    if (ext in supportedDocumentExtensions) {
-                        val mime = child.type ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
-                        found.add(BrowserDocument(child.uri, name, mime, path, child.length().coerceAtLeast(0L), child.lastModified(), false))
-                    }
-                }
+        val pathColumn = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            MediaStore.MediaColumns.RELATIVE_PATH
+        } else {
+            MediaStore.MediaColumns.DATA
+        }
+        val projection = arrayOf(
+            MediaStore.Files.FileColumns._ID,
+            MediaStore.MediaColumns.DISPLAY_NAME,
+            MediaStore.MediaColumns.MIME_TYPE,
+            MediaStore.MediaColumns.SIZE,
+            MediaStore.MediaColumns.DATE_MODIFIED,
+            pathColumn
+        )
+        val files = mutableListOf<BrowserDocument>()
+        val collection = MediaStore.Files.getContentUri("external")
+        context.contentResolver.query(collection, projection, null, null, MediaStore.MediaColumns.DISPLAY_NAME + " ASC")?.use { cursor ->
+            val idIndex = cursor.getColumnIndex(MediaStore.Files.FileColumns._ID)
+            val nameIndex = cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
+            val mimeIndex = cursor.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE)
+            val sizeIndex = cursor.getColumnIndex(MediaStore.MediaColumns.SIZE)
+            val dateIndex = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
+            val pathIndex = cursor.getColumnIndex(pathColumn)
+            if (idIndex < 0 || nameIndex < 0 || pathIndex < 0) {
+                return emptyList<BrowserDocument>() to "Android did not provide document metadata."
+            }
+            while (cursor.moveToNext()) {
+                val name = cursor.getString(nameIndex) ?: continue
+                val extension = name.substringAfterLast('.', "").lowercase()
+                if (extension !in supportedDocumentExtensions) continue
+                val rawPath = if (cursor.isNull(pathIndex)) "" else cursor.getString(pathIndex).orEmpty()
+                val relativePath = normalizeDocumentPath(context, rawPath)
+                val id = cursor.getLong(idIndex)
+                files.add(
+                    BrowserDocument(
+                        uri = Uri.withAppendedPath(collection, id.toString()),
+                        name = name,
+                        mimeType = if (mimeIndex >= 0 && !cursor.isNull(mimeIndex)) cursor.getString(mimeIndex)
+                            else MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension) ?: "application/octet-stream",
+                        relativePath = relativePath,
+                        size = if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) cursor.getLong(sizeIndex) else 0L,
+                        modified = if (dateIndex >= 0 && !cursor.isNull(dateIndex)) cursor.getLong(dateIndex) else 0L,
+                        isDirectory = false
+                    )
+                )
+            }
+        } ?: return emptyList<BrowserDocument>() to "Android could not scan the device's shared storage."
+        val folders = linkedMapOf<String, BrowserDocument>()
+        files.forEach { file ->
+            val segments = file.relativePath.split('/').filter { it.isNotBlank() }
+            var path = ""
+            segments.forEach { segment ->
+                path = if (path.isBlank()) segment else "$path/$segment"
+                folders[path] = BrowserDocument(
+                    uri = Uri.parse("instagallery-folder:" + Uri.encode(path)),
+                    name = segment,
+                    mimeType = "inode/directory",
+                    relativePath = path,
+                    size = 0L,
+                    modified = 0L,
+                    isDirectory = true
+                )
             }
         }
-        visit(root, "", 0)
-        found to null
-    } catch (_: SecurityException) {
-        emptyList<BrowserDocument>() to "Access to this folder was denied. Please choose the folder again."
+        (folders.values.toList() + files) to null
+    } catch (e: SecurityException) {
+        emptyList<BrowserDocument>() to "Android blocked document access. Allow All files access in Android Settings, then try again."
     } catch (e: Exception) {
-        emptyList<BrowserDocument>() to ("Could not read this folder: " + (e.message ?: "unknown error"))
+        emptyList<BrowserDocument>() to ("Could not scan documents: " + (e.message ?: "unknown error"))
     }
+}
+
+private fun normalizeDocumentPath(context: Context, rawPath: String): String {
+    val normalized = rawPath.replace('\\', '/').trim('/')
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) return normalized
+    val root = Environment.getExternalStorageDirectory().absolutePath.replace('\\', '/').trimEnd('/')
+    return normalized.removePrefix(root).trim('/')
 }
 
 @Composable
