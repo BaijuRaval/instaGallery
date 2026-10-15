@@ -1886,17 +1886,18 @@ private fun ReelsViewer(
                 val latestScreenFillZoom by rememberUpdatedState(screenFillZoom)
                 var initialFitApplied by remember(item.uri) { mutableStateOf(false) }
                 LaunchedEffect(item.uri, mediaAutoFitToScreen, viewportSize, imageAspectRatio) {
-                    if (viewportSize.width > 0 && viewportSize.height > 0) {
+                    if (!initialFitApplied && viewportSize.width > 0 && viewportSize.height > 0 && imageAspectRatio > 0f) {
+                        pan = Offset.Zero
                         if (mediaAutoFitToScreen) {
                             zoom = 1f
-                            pan = Offset.Zero
                             screenFillActive = false
-                            initialFitApplied = true
-                        } else if (!initialFitApplied && imageAspectRatio > 0f) {
+                            currentMediaZoomed = false
+                        } else {
                             zoom = latestScreenFillZoom
                             screenFillActive = true
-                            initialFitApplied = true
+                            currentMediaZoomed = zoom > 1.001f
                         }
+                        initialFitApplied = true
                     }
                 }
                 AsyncImage(
@@ -2082,17 +2083,18 @@ private fun VideoPage(
     val latestScreenFillZoom by rememberUpdatedState(screenFillZoom)
     var initialFitApplied by remember(item.uri) { mutableStateOf(false) }
     LaunchedEffect(active, mediaAutoFitToScreen, viewportSize, videoAspectRatio) {
-        if (active && viewportSize.width > 0 && viewportSize.height > 0) {
+        if (active && !initialFitApplied && viewportSize.width > 0 && viewportSize.height > 0 && videoAspectRatio > 0f) {
+            pan = Offset.Zero
             if (mediaAutoFitToScreen) {
                 zoom = 1f
-                pan = Offset.Zero
                 screenFillActive = false
-                initialFitApplied = true
-            } else if (!initialFitApplied && videoAspectRatio > 0f) {
+                onZoomChanged(false)
+            } else {
                 zoom = latestScreenFillZoom
                 screenFillActive = true
-                initialFitApplied = true
+                onZoomChanged(zoom > 1.001f)
             }
+            initialFitApplied = true
         }
     }
     var seekBarVisible by remember(item.uri) { mutableStateOf(false) }
