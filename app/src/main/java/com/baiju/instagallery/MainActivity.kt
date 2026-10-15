@@ -79,6 +79,8 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -99,7 +101,6 @@ import androidx.media3.ui.PlayerView
 import coil.ImageLoader
 import coil.compose.AsyncImage
 import coil.compose.rememberAsyncImagePainter
-import coil.compose.rememberConstraintsSizeResolver
 import coil.memory.MemoryCache
 import coil.request.ImageRequest
 import kotlinx.coroutines.Dispatchers
@@ -1440,12 +1441,15 @@ private fun ReelsViewer(
                 var zoomAnimJob by remember(item.uri) { mutableStateOf<Job?>(null) }
                 var screenFillActive by remember(item.uri) { mutableStateOf(false) }
                 var viewportSize by remember(item.uri) { mutableStateOf(IntSize.Zero) }
-                // Decode only to the visible viewer size to avoid huge full-resolution bitmaps.
-                val imageSizeResolver = rememberConstraintsSizeResolver()
-                val imageRequest = remember(item.uri, imageSizeResolver) {
+                // Decode to screen dimensions instead of the full camera-resolution image.
+                val configuration = LocalConfiguration.current
+                val density = LocalDensity.current
+                val imageWidthPx = with(density) { configuration.screenWidthDp.dp.roundToPx().coerceAtLeast(1) }
+                val imageHeightPx = with(density) { configuration.screenHeightDp.dp.roundToPx().coerceAtLeast(1) }
+                val imageRequest = remember(item.uri, imageWidthPx, imageHeightPx) {
                     ImageRequest.Builder(context)
                         .data(item.uri)
-                        .size(imageSizeResolver)
+                        .size(imageWidthPx, imageHeightPx)
                         .crossfade(false)
                         .build()
                 }
@@ -1463,7 +1467,6 @@ private fun ReelsViewer(
                     painter = imagePainter,
                     contentDescription = item.name,
                     modifier = Modifier.fillMaxSize()
-                        .then(imageSizeResolver)
                         .onSizeChanged { viewportSize = it }
                         .pointerInput(item.uri) {
                             awaitEachGesture {
