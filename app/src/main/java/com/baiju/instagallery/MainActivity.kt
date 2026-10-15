@@ -367,7 +367,7 @@ private fun GalleryApp() {
             controller.show(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
         }
     }
-    val hasInnerScreen = viewerStartUri != null || actionMenu || settingsOpen || manageMediaInfoOpen || albumMenu ||
+    val hasInnerScreen = viewerStartUri != null || actionMenu || manageMediaInfoOpen || albumMenu ||
         infoItem != null || renameItem != null || statusMessage != null || transferMode != null ||
         selected.isNotEmpty() || selectedFolder != null || settingsPage != null || folderRemoveTarget != null ||
         (tab == "Folders" && selectedAlbum != "All media") || tab != "Reel"
