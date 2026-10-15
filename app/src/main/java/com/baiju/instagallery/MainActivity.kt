@@ -58,6 +58,7 @@ import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Collections
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
@@ -191,6 +192,18 @@ private fun GalleryApp() {
     var resumeHandled by remember { mutableStateOf(false) }
     val settingsPrefs = remember(context) {
         context.getSharedPreferences("instagallery_settings", Context.MODE_PRIVATE)
+    }
+    var documentsTreeUriString by remember(context) {
+        mutableStateOf(settingsPrefs.getString("documents_tree_uri", null))
+    }
+    val documentTreePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            } catch (_: SecurityException) { }
+            documentsTreeUriString = uri.toString()
+            settingsPrefs.edit().putString("documents_tree_uri", uri.toString()).apply()
+        }
     }
     var autoPlayNext by remember(context) {
         mutableStateOf(settingsPrefs.getBoolean("auto_play_next", true))
@@ -562,9 +575,10 @@ private fun GalleryApp() {
             media = loadedMedia
         }
     }
-    val visible = remember(media, selectedAlbum, hiddenFolders) {
+    val visible = remember(media, selectedAlbum, hiddenFolders, tab) {
         (if (selectedAlbum == "All media") media else media.filter { it.album == selectedAlbum })
             .filter { it.album !in hiddenFolders }
+            .filter { item -> when (tab) { "Images" -> !item.isVideo; "Videos" -> item.isVideo; else -> true } }
     }
 
     LaunchedEffect(hasPermission, media, rememberLastPlayed) {
@@ -690,16 +704,27 @@ private fun GalleryApp() {
             )
         } else if (mainMenuOpen) {
             GalleryMenuScreen(
-                currentView = if (tab == "Folders") "Folder" else "Reel",
+                currentView = when (tab) { "Folders" -> "Folder"; "Documents" -> "Documents"; "Images" -> "Images"; "Videos" -> "Videos"; else -> "Reel" },
                 onClose = { mainMenuOpen = false },
                 onSelectView = { nextTab ->
                     tab = nextTab
                     selectedAlbum = "All media"
                     selectedFolder = null
                     selected = emptySet()
+                    if (nextTab == "Documents") {
+                        viewerStartUri = null
+                        viewerDisplayUri = null
+                        viewerCurrentUri = null
+                    }
                     mainMenuOpen = false
                 },
                 onOpenSettings = { mainMenuOpen = false; settingsPage = "main" }
+            )
+        } else if (tab == "Documents") {
+            DocumentsScreen(
+                treeUri = documentsTreeUriString?.let { Uri.parse(it) },
+                onChooseFolder = { documentTreePicker.launch(null) },
+                onBack = { tab = "Reel"; selectedAlbum = "All media"; selectedFolder = null; selected = emptySet() }
             )
         } else {
         val viewerStart = viewerStartUri
@@ -841,9 +866,10 @@ private fun GalleryApp() {
                 ) { galleryTarget ->
                     val gridTab = galleryTarget.first
                     val gridAlbum = galleryTarget.second
-                    val animatedVisible = remember(media, hiddenFolders, gridAlbum) {
+                    val animatedVisible = remember(media, hiddenFolders, gridAlbum, gridTab) {
                         (if (gridAlbum == "All media") media else media.filter { it.album == gridAlbum })
                             .filter { it.album !in hiddenFolders }
+                            .filter { item -> when (gridTab) { "Images" -> !item.isVideo; "Videos" -> item.isVideo; else -> true } }
                     }
                     when {
                     !hasPermission -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1266,7 +1292,7 @@ private fun GalleryMenuScreen(
             IconButton(onClick = onClose) { Icon(Icons.Default.Close, "Close menu", tint = Color.White) }
             Text("Menu", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold)
         }
-        Text("Choose view", color = Color.LightGray, fontSize = 13.sp)
+        Text("Media", color = Color.LightGray, fontSize = 13.sp)
         Surface(
             onClick = { onSelectView("Folders") },
             color = if (currentView == "Folder") Color(0xFF3A2630) else Color(0xFF191919),
@@ -1297,6 +1323,49 @@ private fun GalleryMenuScreen(
                     Text("Swipe through photos and videos", color = Color.LightGray, fontSize = 13.sp)
                 }
                 if (currentView == "Reel") Icon(Icons.Default.ChevronRight, null, tint = Color.White)
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Surface(
+                onClick = { onSelectView("Images") },
+                color = if (currentView == "Images") Color(0xFF3A2630) else Color(0xFF191919),
+                shape = MaterialTheme.shapes.large,
+                modifier = Modifier.weight(1f)
+            ) {
+                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Collections, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(24.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Images", color = Color.White, fontWeight = FontWeight.SemiBold)
+                }
+            }
+            Surface(
+                onClick = { onSelectView("Videos") },
+                color = if (currentView == "Videos") Color(0xFF3A2630) else Color(0xFF191919),
+                shape = MaterialTheme.shapes.large,
+                modifier = Modifier.weight(1f)
+            ) {
+                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.PlayArrow, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(24.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Videos", color = Color.White, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+        Text("Documents", color = Color.LightGray, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp))
+        Surface(
+            onClick = { onSelectView("Documents") },
+            color = if (currentView == "Documents") Color(0xFF3A2630) else Color(0xFF191919),
+            shape = MaterialTheme.shapes.large,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Description, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(28.dp))
+                Spacer(Modifier.width(16.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Documents", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                    Text("PDF, Word, Excel, PowerPoint and text files", color = Color.LightGray, fontSize = 13.sp)
+                }
+                Icon(Icons.Default.ChevronRight, null, tint = Color.LightGray)
             }
         }
         Spacer(Modifier.height(6.dp))
