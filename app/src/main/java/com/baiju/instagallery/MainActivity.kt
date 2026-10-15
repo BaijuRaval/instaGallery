@@ -70,7 +70,7 @@ import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
 
-private data class GalleryMedia(val uri: Uri, val name: String, val mimeType: String, val album: String, val dateAdded: Long, val size: Long) {
+private data class GalleryMedia(val uri: Uri, val name: String, val mimeType: String, val album: String, val dateAdded: Long, val size: Long, val relativePath: String) {
     val isVideo: Boolean get() = mimeType.startsWith("video/")
 }
 
@@ -101,13 +101,25 @@ private fun GalleryApp() {
     var settingsOpen by remember { mutableStateOf(false) }
     var albumMenu by remember { mutableStateOf(false) }
     var actionMenu by remember { mutableStateOf(false) }
+    var transferMode by remember { mutableStateOf<String?>(null) }
+    var transferItems by remember { mutableStateOf<List<GalleryMedia>>(emptyList()) }
+    var transferReturnTab by remember { mutableStateOf("Reel") }
+    var transferReturnAlbum by remember { mutableStateOf("All media") }
+    var pendingTransferMessage by remember { mutableStateOf<String?>(null) }
+    val thumbnailLoader = remember(context) {
+        ImageLoader.Builder(context).components { add(VideoFrameDecoder.Factory()) }.crossfade(true).build()
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         hasPermission = context.hasMediaPermission()
     }
-    val deleteLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) {
+    val deleteLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
         media = context.queryGalleryMedia()
         selected = emptySet()
+        pendingTransferMessage?.let { message ->
+            statusMessage = if (result.resultCode == android.app.Activity.RESULT_OK) message else "Files were copied; original files were kept."
+            pendingTransferMessage = null
+        }
     }
 
     fun requestPermissions() {
@@ -116,6 +128,49 @@ private fun GalleryApp() {
         permissionLauncher.launch(permissions)
     }
     fun refresh() { media = context.queryGalleryMedia() }
+    fun beginTransfer(mode: String) {
+        val targets = media.filter { it.uri in selected }
+        if (targets.isEmpty()) return
+        transferItems = targets
+        transferMode = mode
+        transferReturnTab = tab
+        transferReturnAlbum = selectedAlbum
+        selected = emptySet()
+        actionMenu = false
+        tab = "Folders"
+        selectedAlbum = "All media"
+    }
+    fun cancelTransfer() {
+        transferMode = null
+        transferItems = emptyList()
+        tab = transferReturnTab
+        selectedAlbum = transferReturnAlbum
+    }
+    fun transferToFolder(folder: String) {
+        val destination = media.firstOrNull { it.album == folder }
+        val targets = transferItems
+        if (destination == null || targets.isEmpty()) {
+            statusMessage = "Could not find the destination folder."
+            cancelTransfer()
+            return
+        }
+        val copied = targets.count { context.copyMediaToFolder(it, destination.relativePath) }
+        if (transferMode == "Move" && copied == targets.size) {
+            pendingTransferMessage = "Moved $copied item(s) to $folder."
+            deleteMedia(targets)
+        } else {
+            statusMessage = if (transferMode == "Copy") {
+                "Copied $copied of ${targets.size} item(s) to $folder."
+            } else {
+                "Copied $copied of ${targets.size} item(s) to $folder. Originals were kept because not all files copied."
+            }
+        }
+        transferMode = null
+        transferItems = emptyList()
+        tab = transferReturnTab
+        selectedAlbum = transferReturnAlbum
+        refresh()
+    }
     fun deleteMedia(items: List<GalleryMedia>) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -154,11 +209,12 @@ private fun GalleryApp() {
         }
     }
     val hasInnerScreen = viewerStartUri != null || actionMenu || settingsOpen || albumMenu ||
-        infoItem != null || renameItem != null || statusMessage != null ||
+        infoItem != null || renameItem != null || statusMessage != null || transferMode != null ||
         selected.isNotEmpty() || (tab == "Folders" && selectedAlbum != "All media") || tab != "Reel"
     BackHandler(enabled = hasInnerScreen) {
         when {
             viewerStartUri != null -> { viewerStartUri = null; selected = emptySet() }
+            transferMode != null -> cancelTransfer()
             actionMenu -> actionMenu = false
             settingsOpen -> settingsOpen = false
             albumMenu -> albumMenu = false
@@ -182,8 +238,12 @@ private fun GalleryApp() {
                     Icon(Icons.Default.Collections, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(28.dp))
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(if (selected.isNotEmpty()) "${selected.size} selected" else "instaGallery", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                        Text("${visible.size} items", color = Color.LightGray, fontSize = 12.sp)
+                        Text(when {
+                            transferMode != null -> "Choose destination"
+                            selected.isNotEmpty() -> "${selected.size} selected"
+                            else -> "instaGallery"
+                        }, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        Text(if (transferMode != null) "${transferMode} to a folder" else "${visible.size} items", color = Color.LightGray, fontSize = 12.sp)
                     }
                     Box {
                         IconButton(onClick = { if (selected.isNotEmpty()) actionMenu = true else settingsOpen = true }) {
@@ -194,21 +254,8 @@ private fun GalleryApp() {
                             DropdownMenuItem(text = { Text("Share") }, leadingIcon = { Icon(Icons.Default.Share, null) }, onClick = { actionMenu = false; shareMedia(media.filter { it.uri in selected }) })
                             DropdownMenuItem(text = { Text("Details") }, leadingIcon = { Icon(Icons.Default.Info, null) }, onClick = { actionMenu = false; media.firstOrNull { it.uri in selected }?.let { infoItem = it } })
                             DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Default.Edit, null) }, onClick = { actionMenu = false; media.firstOrNull { it.uri in selected }?.let { renameItem = it; renameText = it.name } })
-                            DropdownMenuItem(text = { Text("Copy") }, leadingIcon = { Icon(Icons.Default.ContentCopy, null) }, onClick = {
-                                actionMenu = false
-                                val targets = media.filter { it.uri in selected }
-                                val count = targets.count { context.copyMediaToGallery(it) }
-                                statusMessage = "Copied $count of ${targets.size} items to instaGallery"
-                                refresh()
-                            })
-                            DropdownMenuItem(text = { Text("Move") }, leadingIcon = { Icon(Icons.Default.DriveFileMove, null) }, onClick = {
-                                actionMenu = false
-                                val targets = media.filter { it.uri in selected }
-                                val count = targets.count { context.copyMediaToGallery(it) }
-                                if (count == targets.size) deleteMedia(targets)
-                                else statusMessage = "Copied $count of ${targets.size}; originals kept for safety"
-                                refresh()
-                            })
+                            DropdownMenuItem(text = { Text("Copy") }, leadingIcon = { Icon(Icons.Default.ContentCopy, null) }, onClick = { beginTransfer("Copy") })
+                            DropdownMenuItem(text = { Text("Move") }, leadingIcon = { Icon(Icons.Default.DriveFileMove, null) }, onClick = { beginTransfer("Move") })
                             DropdownMenuItem(text = { Text("Delete") }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = Color(0xFFFF6680)) }, onClick = { actionMenu = false; deleteMedia(media.filter { it.uri in selected }) })
                             DropdownMenuItem(text = { Text("Cancel selection") }, onClick = { actionMenu = false; selected = emptySet() })
                         }
@@ -231,7 +278,9 @@ private fun GalleryApp() {
                             LazyVerticalGrid(columns = GridCells.Fixed(2), modifier = Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 items(folders.keys.toList(), key = { it }) { folder ->
                                     val folderItems = folders[folder].orEmpty()
-                                    FolderTile(folder, folderItems, onClick = { selectedAlbum = folder })
+                                    FolderTile(folder, folderItems, imageLoader = thumbnailLoader, onClick = {
+                                        if (transferMode != null) transferToFolder(folder) else selectedAlbum = folder
+                                    })
                                 }
                             }
                         }
@@ -239,7 +288,7 @@ private fun GalleryApp() {
                     else -> LazyVerticalGrid(columns = GridCells.Fixed(3), modifier = Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(2.dp), horizontalArrangement = Arrangement.spacedBy(2.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         items(visible, key = { it.uri.toString() }) { item ->
                             val isSelected = item.uri in selected
-                            MediaThumbnail(item, isSelected,
+                            MediaThumbnail(item, isSelected, thumbnailLoader,
                                 onClick = {
                                     if (selected.isNotEmpty()) selected = if (isSelected) selected - item.uri else selected + item.uri
                                     else viewerStartUri = item.uri
@@ -300,7 +349,9 @@ private fun Context.hasMediaPermission(): Boolean {
 private fun Context.queryGalleryMedia(): List<GalleryMedia> {
     val result = mutableListOf<GalleryMedia>()
     listOf(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, MediaStore.Video.Media.EXTERNAL_CONTENT_URI).forEach { collection ->
-        val projection = arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.MIME_TYPE, MediaStore.MediaColumns.DATE_ADDED, MediaStore.MediaColumns.SIZE, "bucket_display_name")
+        val projection = mutableListOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.MIME_TYPE, MediaStore.MediaColumns.DATE_ADDED, MediaStore.MediaColumns.SIZE, "bucket_display_name").apply {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) add(MediaStore.MediaColumns.RELATIVE_PATH)
+        }.toTypedArray()
         try {
             contentResolver.query(collection, projection, null, null, "${MediaStore.MediaColumns.DATE_ADDED} DESC")?.use { cursor ->
                 val idCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
@@ -309,6 +360,7 @@ private fun Context.queryGalleryMedia(): List<GalleryMedia> {
                 val dateCol = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_ADDED)
                 val sizeCol = cursor.getColumnIndex(MediaStore.MediaColumns.SIZE)
                 val albumCol = cursor.getColumnIndex("bucket_display_name")
+                val pathCol = cursor.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH)
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idCol)
                     result += GalleryMedia(ContentUris.withAppendedId(collection, id),
@@ -316,7 +368,8 @@ private fun Context.queryGalleryMedia(): List<GalleryMedia> {
                         if (mimeCol >= 0) cursor.getString(mimeCol) ?: "" else "",
                         if (albumCol >= 0) cursor.getString(albumCol) ?: "Other" else "Other",
                         if (dateCol >= 0) cursor.getLong(dateCol) else 0L,
-                        if (sizeCol >= 0) cursor.getLong(sizeCol) else 0L)
+                        if (sizeCol >= 0) cursor.getLong(sizeCol) else 0L,
+                        if (pathCol >= 0) cursor.getString(pathCol).orEmpty() else if (collection == MediaStore.Video.Media.EXTERNAL_CONTENT_URI) "Movies/" else "Pictures/")
                 }
             }
         } catch (_: SecurityException) {}
@@ -324,12 +377,13 @@ private fun Context.queryGalleryMedia(): List<GalleryMedia> {
     return result.distinctBy { it.uri }.sortedByDescending { it.dateAdded }
 }
 
-private fun Context.copyMediaToGallery(item: GalleryMedia): Boolean {
+private fun Context.copyMediaToFolder(item: GalleryMedia, relativePath: String): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || relativePath.isBlank()) return false
     val collection = if (item.isVideo) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
     val values = android.content.ContentValues().apply {
         put(MediaStore.MediaColumns.DISPLAY_NAME, item.name)
         put(MediaStore.MediaColumns.MIME_TYPE, item.mimeType)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) put(MediaStore.MediaColumns.RELATIVE_PATH, if (item.isVideo) "Movies/instaGallery" else "Pictures/instaGallery")
+        put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
     }
     return try {
         val dest = contentResolver.insert(collection, values) ?: return false
@@ -342,12 +396,9 @@ private fun Context.copyMediaToGallery(item: GalleryMedia): Boolean {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun FolderTile(name: String, items: List<GalleryMedia>, onClick: () -> Unit) {
+private fun FolderTile(name: String, items: List<GalleryMedia>, imageLoader: ImageLoader, onClick: () -> Unit) {
     val context = LocalContext.current
     val cover = items.firstOrNull()
-    val videoImageLoader = remember(context) {
-        ImageLoader.Builder(context).components { add(VideoFrameDecoder.Factory()) }.crossfade(true).build()
-    }
     Column(
         Modifier.fillMaxWidth().background(Color(0xFF191919), MaterialTheme.shapes.medium).combinedClickable(onClick = onClick, onLongClick = onClick)
     ) {
@@ -355,7 +406,7 @@ private fun FolderTile(name: String, items: List<GalleryMedia>, onClick: () -> U
             if (cover != null) {
                 AsyncImage(
                     model = ImageRequest.Builder(context).data(cover.uri).apply { if (cover.isVideo) videoFrameMillis(0) }.crossfade(true).build(),
-                    imageLoader = videoImageLoader,
+                    imageLoader = imageLoader,
                     contentDescription = "$name folder preview",
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop
@@ -372,14 +423,11 @@ private fun FolderTile(name: String, items: List<GalleryMedia>, onClick: () -> U
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MediaThumbnail(item: GalleryMedia, selected: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
+private fun MediaThumbnail(item: GalleryMedia, selected: Boolean, imageLoader: ImageLoader, onClick: () -> Unit, onLongClick: () -> Unit) {
     val context = LocalContext.current
-    val videoImageLoader = remember(context) {
-        ImageLoader.Builder(context).components { add(VideoFrameDecoder.Factory()) }.crossfade(true).build()
-    }
     Box(Modifier.aspectRatio(0.78f).background(if (selected) Color(0xFF503040) else Color.DarkGray).combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
         AsyncImage(model = ImageRequest.Builder(context).data(item.uri).apply { if (item.isVideo) videoFrameMillis(0) }.crossfade(true).build(),
-            imageLoader = videoImageLoader, contentDescription = item.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            imageLoader = imageLoader, contentDescription = item.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         if (item.isVideo) Icon(Icons.Default.PlayArrow, "Video", tint = Color.White, modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(24.dp))
         if (selected) Box(Modifier.fillMaxSize().background(Color(0x6633A6FF)), contentAlignment = Alignment.TopEnd) {
             Text("✓", color = Color.White, fontSize = 22.sp, modifier = Modifier.padding(5.dp))
