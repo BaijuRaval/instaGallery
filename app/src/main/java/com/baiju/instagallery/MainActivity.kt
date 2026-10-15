@@ -789,6 +789,10 @@ private fun GalleryApp() {
                 initialViewMode = if (documentFolderMode) "folders" else "all",
                 onDocumentOpenChanged = { documentViewerOpen = it },
                 onOpenMenu = { mainMenuOpen = true },
+                mediaGridColumns = mediaGridColumns,
+                folderGridColumns = folderGridColumns,
+                onMediaGridColumnsChange = { mediaGridColumns = it },
+                onFolderGridColumnsChange = { folderGridColumns = it },
                 onBack = {
                     documentViewerOpen = false
                     tab = if (menuScope == "Folder") "Folders" else "Reel"
