@@ -242,10 +242,22 @@ private fun GalleryApp() {
     // These states live above the screen switch so opening media/settings doesn't reset scroll.
     val mediaGridState = rememberLazyGridState()
     val folderGridState = rememberLazyGridState()
-    var mediaGridColumns by remember { mutableIntStateOf(3) }
-    var folderGridColumns by remember { mutableIntStateOf(2) }
+    var mediaGridColumns by remember(context) {
+        mutableIntStateOf(settingsPrefs.getInt("media_grid_columns", 3).coerceIn(2, 6))
+    }
+    var folderGridColumns by remember(context) {
+        mutableIntStateOf(settingsPrefs.getInt("folder_grid_columns", 2).coerceIn(1, 4))
+    }
     var isRefreshing by remember { mutableStateOf(false) }
     var thumbnailRevision by remember { mutableIntStateOf(0) }
+
+    // Keep pinch-to-zoom grid density between app launches.
+    LaunchedEffect(mediaGridColumns) {
+        settingsPrefs.edit().putInt("media_grid_columns", mediaGridColumns).apply()
+    }
+    LaunchedEffect(folderGridColumns) {
+        settingsPrefs.edit().putInt("folder_grid_columns", folderGridColumns).apply()
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         hasPermission = context.hasMediaPermission()
