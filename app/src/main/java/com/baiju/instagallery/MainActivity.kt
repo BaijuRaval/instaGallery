@@ -324,6 +324,7 @@ private fun Context.copyMediaToGallery(item: GalleryMedia): Boolean {
     } catch (_: Exception) { false }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FolderTile(name: String, items: List<GalleryMedia>, onClick: () -> Unit) {
     val context = LocalContext.current
