@@ -616,12 +616,13 @@ private fun GalleryApp() {
             controller.show(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
         }
     }
-    val hasInnerScreen = viewerStartUri != null || actionMenu || manageMediaInfoOpen || albumMenu ||
+    val hasInnerScreen = viewerStartUri != null || mainMenuOpen || actionMenu || manageMediaInfoOpen || albumMenu ||
         infoItem != null || renameItem != null || renameMultipleItems.isNotEmpty() || statusMessage != null || transferMode != null ||
         selected.isNotEmpty() || selectedFolder != null || settingsPage != null || folderRemoveTarget != null ||
         (tab == "Folders" && selectedAlbum != "All media") || tab != "Reel"
     BackHandler(enabled = hasInnerScreen) {
         when {
+            mainMenuOpen -> mainMenuOpen = false
             viewerStartUri != null -> {
                 pendingGridScrollUri = viewerCurrentUri ?: viewerStartUri
                 viewerStartUri = null
@@ -676,11 +677,27 @@ private fun GalleryApp() {
                 onOpenHiddenFolders = { settingsPage = "hiddenFolders" },
                 onToggleFolder = { folder, hidden -> setFolderHidden(folder, hidden) }
             )
+        } else if (mainMenuOpen) {
+            GalleryMenuScreen(
+                currentView = if (tab == "Folders") "Folder" else "Reel",
+                onClose = { mainMenuOpen = false },
+                onSelectView = { nextTab ->
+                    tab = nextTab
+                    selectedAlbum = "All media"
+                    selectedFolder = null
+                    selected = emptySet()
+                    mainMenuOpen = false
+                },
+                onOpenSettings = { mainMenuOpen = false; settingsPage = "main" }
+            )
         } else {
         val viewerStart = viewerStartUri
         AnimatedContent(
             targetState = viewerStart.takeIf { visible.isNotEmpty() },
-            transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(180)) },
+            transitionSpec = {
+                (fadeIn(tween(280)) + scaleIn(tween(280), initialScale = 0.93f)) togetherWith
+                    (fadeOut(tween(180)) + scaleOut(tween(180), targetScale = 1.025f))
+            },
             label = "mediaViewerTransition"
         ) { animatedViewerStart ->
         if (animatedViewerStart != null && visible.isNotEmpty()) {
@@ -704,7 +721,34 @@ private fun GalleryApp() {
                 }
             )
         } else {
-            Column(Modifier.fillMaxSize().background(Color(0xFF101010)).statusBarsPadding().animateContentSize()) {
+            Column(Modifier.fillMaxSize().background(Color(0xFF101010)).statusBarsPadding().animateContentSize().pointerInput(tab, selected, selectedFolder, transferMode, mainMenuOpen) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    var horizontalSwipe = false
+                    var multiTouchSwipe = false
+                    var lastDx = 0f
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Final)
+                        val pressed = event.changes.filter { it.pressed }
+                        if (pressed.size >= 2) multiTouchSwipe = true
+                        val change = event.changes.firstOrNull { it.id == down.id }
+                        if (change == null) break
+                        lastDx = change.position.x - down.position.x
+                        val totalDy = change.position.y - down.position.y
+                        if (!multiTouchSwipe && kotlin.math.abs(lastDx) > viewConfiguration.touchSlop && kotlin.math.abs(lastDx) > kotlin.math.abs(totalDy) * 1.25f) {
+                            horizontalSwipe = true
+                        }
+                        if (!change.pressed) {
+                            if (horizontalSwipe && !multiTouchSwipe && selected.isEmpty() && selectedFolder == null && transferMode == null && !mainMenuOpen) {
+                                tab = if (tab == "Folders") "Reel" else "Folders"
+                                selectedAlbum = "All media"
+                                selected = emptySet()
+                            }
+                            break
+                        }
+                    }
+                }
+            }) {
                 AnimatedContent(
                     targetState = when {
                         selected.isNotEmpty() -> "media" to null
@@ -747,20 +791,18 @@ private fun GalleryApp() {
                         }
                         else -> {
                             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Collections, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(28.dp))
-                                Spacer(Modifier.width(10.dp))
+                                IconButton(onClick = { mainMenuOpen = true }) {
+                                    Icon(Icons.Default.Menu, "Open menu", tint = Color.White, modifier = Modifier.size(27.dp))
+                                }
+                                Spacer(Modifier.width(4.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text(when {
                                         transferMode != null -> "Choose destination"
                                         tab == "Folders" && selectedAlbum != "All media" -> selectedAlbum
-                                        else -> "instaGallery"
+                                        tab == "Folders" -> "Folder"
+                                        else -> "Reel"
                                     }, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Text(if (transferMode != null) "${transferMode} to a folder" else "${visible.size} items", color = Color.LightGray, fontSize = 12.sp)
-                                }
-                                if (tab == "Folders" && transferMode == null) {
-                                    IconButton(onClick = { settingsPage = "main" }) {
-                                        Icon(Icons.Default.Settings, "Settings", tint = Color.White)
-                                    }
                                 }
                             }
                         }
@@ -768,7 +810,17 @@ private fun GalleryApp() {
                 }
                 AnimatedContent(
                     targetState = tab to selectedAlbum,
-                    transitionSpec = { fadeIn(tween(200)) togetherWith fadeOut(tween(140)) },
+                    transitionSpec = {
+                        if (targetState.first != initialState.first) {
+                            val towardReel = targetState.first == "Reel"
+                            (fadeIn(tween(270)) + slideInHorizontally(tween(270)) { width -> if (towardReel) width / 4 else -width / 4 }) togetherWith
+                                (fadeOut(tween(190)) + slideOutHorizontally(tween(190)) { width -> if (towardReel) -width / 4 else width / 4 })
+                        } else {
+                            val openingFolder = targetState.second != "All media"
+                            (fadeIn(tween(270)) + slideInVertically(tween(270)) { height -> if (openingFolder) height / 8 else -height / 8 }) togetherWith
+                                (fadeOut(tween(190)) + slideOutVertically(tween(190)) { height -> if (openingFolder) -height / 8 else height / 8 })
+                        }
+                    },
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     label = "galleryContentTransition"
                 ) { galleryTarget ->
@@ -1036,10 +1088,7 @@ private fun GalleryApp() {
                             }
                         }
                         else -> {
-                            Row(Modifier.fillMaxWidth().navigationBarsPadding().background(Color(0xFF171717)).padding(vertical = 5.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                                NavigationBarItem(selected = tab == "Folders", onClick = { tab = "Folders"; selectedAlbum = "All media"; selectedFolder = null; selected = emptySet() }, icon = { Icon(Icons.Default.Folder, null) }, label = { Text("Folders") })
-                                NavigationBarItem(selected = tab == "Reel", onClick = { tab = "Reel"; selectedAlbum = "All media"; selectedFolder = null; selected = emptySet() }, icon = { Icon(Icons.Default.PlayArrow, null) }, label = { Text("Reel") })
-                            }
+                            Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
                         }
                     }
                 }
