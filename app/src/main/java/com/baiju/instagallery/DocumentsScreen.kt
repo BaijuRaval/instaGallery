@@ -19,6 +19,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -42,6 +44,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowInsetsCompat
@@ -78,7 +82,11 @@ internal fun DocumentsScreen(
     onBack: () -> Unit,
     initialViewMode: String = "all",
     onDocumentOpenChanged: (Boolean) -> Unit = {},
-    onOpenMenu: () -> Unit = {}
+    onOpenMenu: () -> Unit = {},
+    mediaGridColumns: Int = 3,
+    folderGridColumns: Int = 2,
+    onMediaGridColumnsChange: (Int) -> Unit = {},
+    onFolderGridColumnsChange: (Int) -> Unit = {}
 ) {
     val context = LocalContext.current
     var documents by remember { mutableStateOf(emptyList<BrowserDocument>()) }
@@ -185,12 +193,51 @@ internal fun DocumentsScreen(
                     }.sortedBy { it.name.lowercase() }
                     val currentFiles = documents.filter { !it.isDirectory && it.relativePath == currentFolder }
                         .sortedBy { it.name.lowercase() }
+                    val activeColumns = if (viewMode == "all") mediaGridColumns else folderGridColumns
+                    val gridModifier = Modifier.fillMaxSize().pointerInput(
+                        viewMode, mediaGridColumns, folderGridColumns
+                    ) {
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false)
+                            var accumulatedZoom = 1f
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                val pointers = event.changes.filter { it.pressed }
+                                if (pointers.isEmpty()) break
+                                if (pointers.size >= 2) {
+                                    val first = pointers[0]
+                                    val second = pointers[1]
+                                    val previousDistance = (first.previousPosition - second.previousPosition).getDistance()
+                                    val currentDistance = (first.position - second.position).getDistance()
+                                    if (previousDistance > 0.5f) {
+                                        accumulatedZoom *= currentDistance / previousDistance
+                                        if (accumulatedZoom > 1.16f) {
+                                            if (viewMode == "all") {
+                                                onMediaGridColumnsChange((mediaGridColumns - 1).coerceAtLeast(2))
+                                            } else {
+                                                onFolderGridColumnsChange((folderGridColumns - 1).coerceAtLeast(1))
+                                            }
+                                            accumulatedZoom = 1f
+                                        } else if (accumulatedZoom < 0.86f) {
+                                            if (viewMode == "all") {
+                                                onMediaGridColumnsChange((mediaGridColumns + 1).coerceAtMost(6))
+                                            } else {
+                                                onFolderGridColumnsChange((folderGridColumns + 1).coerceAtMost(4))
+                                            }
+                                            accumulatedZoom = 1f
+                                        }
+                                    }
+                                    pointers.forEach { it.consume() }
+                                }
+                            }
+                        }
+                    }
 
                     if (viewMode == "all") {
                         if (allFiles.isEmpty()) EmptyDocumentsMessage("No supported documents found on this device.")
-                        else LazyVerticalGrid(columns = GridCells.Fixed(2), modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        else LazyVerticalGrid(columns = GridCells.Fixed(activeColumns), modifier = gridModifier,
+                            contentPadding = PaddingValues(6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(allFiles, key = { it.uri.toString() }) { doc ->
                                 DocumentTile(doc, true) { openedDocument = doc }
                             }
@@ -200,9 +247,9 @@ internal fun DocumentsScreen(
                         if (entries.isEmpty()) EmptyDocumentsMessage(
                             if (currentFolder.isBlank()) "No document folders or supported files found."
                             else "This folder has no subfolders or supported documents.")
-                        else LazyVerticalGrid(columns = GridCells.Fixed(2), modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        else LazyVerticalGrid(columns = GridCells.Fixed(activeColumns), modifier = gridModifier,
+                            contentPadding = PaddingValues(6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(entries, key = { it.uri.toString() }) { entry ->
                                 DocumentTile(entry, false) {
                                     if (entry.isDirectory) currentFolder = entry.relativePath else openedDocument = entry
