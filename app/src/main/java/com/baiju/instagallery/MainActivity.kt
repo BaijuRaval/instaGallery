@@ -700,11 +700,14 @@ private fun GalleryApp() {
             selectedFolder != null -> selectedFolder = null
             tab == "Folders" && selectedAlbum != "All media" -> selectedAlbum = "All media"
             tab != "Reel" -> {
-                tab = "Reel"
-                menuScope = "All"
+                val returnToFolders = tab == "Documents" && menuScope == "Folder"
+                tab = if (returnToFolders) "Folders" else "Reel"
+                if (!returnToFolders) menuScope = "All"
                 menuContent = "Media"
                 documentFolderMode = false
                 selectedAlbum = "All media"
+                selectedFolder = null
+                selected = emptySet()
             }
         }
     }
