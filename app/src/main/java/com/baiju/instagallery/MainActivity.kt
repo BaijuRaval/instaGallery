@@ -23,6 +23,8 @@ import androidx.activity.result.IntentSenderRequest
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -40,6 +42,9 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
@@ -104,6 +109,14 @@ private fun GalleryApp() {
     var viewerStartUri by remember { mutableStateOf<Uri?>(null) }
     var tab by remember { mutableStateOf("Reel") }
     var selected by remember { mutableStateOf(setOf<Uri>()) }
+    var selectedFolder by remember { mutableStateOf<String?>(null) }
+    var hiddenFolders by remember(context) {
+        mutableStateOf(context.getSharedPreferences("instagallery_settings", Context.MODE_PRIVATE)
+            .getStringSet("hidden_folders", emptySet())?.toSet() ?: emptySet())
+    }
+    var folderDetailsName by remember { mutableStateOf<String?>(null) }
+    var folderRenameTarget by remember { mutableStateOf<String?>(null) }
+    var folderRenameText by remember { mutableStateOf("") }
     var infoItem by remember { mutableStateOf<GalleryMedia?>(null) }
     var renameItem by remember { mutableStateOf<GalleryMedia?>(null) }
     var renameText by remember { mutableStateOf("") }
@@ -147,6 +160,62 @@ private fun GalleryApp() {
         permissionLauncher.launch(permissions)
     }
     fun refresh() { media = context.queryGalleryMedia() }
+    fun setFolderHidden(folder: String, hidden: Boolean) {
+        val updated = if (hidden) hiddenFolders + folder else hiddenFolders - folder
+        hiddenFolders = updated
+        context.getSharedPreferences("instagallery_settings", Context.MODE_PRIVATE)
+            .edit().putStringSet("hidden_folders", updated).apply()
+        if (hidden && selectedFolder == folder) selectedFolder = null
+        actionMenu = false
+    }
+    fun renameFolder(folder: String, proposedName: String) {
+        val cleanName = proposedName.trim().trim('/').replace("/", "_").replace("\\", "_")
+        if (cleanName.isBlank()) {
+            statusMessage = "Enter a valid folder name."
+            return
+        }
+        if (cleanName == folder) {
+            folderRenameTarget = null
+            return
+        }
+        val targets = media.filter { it.album == folder }
+        var renamed = 0
+        targets.forEach { item ->
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val oldPath = item.relativePath.trimEnd('/')
+                    val parentPath = oldPath.substringBeforeLast('/', "")
+                    val newPath = if (parentPath.isBlank()) "$cleanName/" else "$parentPath/$cleanName/"
+                    val values = android.content.ContentValues().apply {
+                        put(MediaStore.MediaColumns.RELATIVE_PATH, newPath)
+                    }
+                    if (context.contentResolver.update(item.uri, values, null, null) > 0) renamed++
+                } else {
+                    val source = File(item.relativePath, item.name)
+                    val oldDirectory = File(item.relativePath.trimEnd(File.separatorChar))
+                    val targetDirectory = File(oldDirectory.parentFile, cleanName)
+                    if (!targetDirectory.exists()) targetDirectory.mkdirs()
+                    val target = File(targetDirectory, item.name)
+                    if (source.exists() && !target.exists() && source.renameTo(target)) {
+                        MediaScannerConnection.scanFile(context,
+                            arrayOf(source.absolutePath, target.absolutePath),
+                            arrayOf(item.mimeType, item.mimeType), null)
+                        renamed++
+                    }
+                }
+            } catch (_: Exception) { }
+        }
+        folderRenameTarget = null
+        selectedFolder = null
+        refresh()
+        statusMessage = if (renamed == targets.size && targets.isNotEmpty()) {
+            "Folder renamed to $cleanName."
+        } else if (renamed > 0) {
+            "Renamed $renamed of ${targets.size} files. Check the folder contents."
+        } else {
+            "Android couldn't rename this folder. Check media permissions and try again."
+        }
+    }
     fun beginTransfer(mode: String) {
         val targets = media.filter { it.uri in selected }
         if (targets.isEmpty()) return
@@ -245,7 +314,10 @@ private fun GalleryApp() {
     }
 
     LaunchedEffect(hasPermission) { if (hasPermission) media = context.queryGalleryMedia() }
-    val visible = remember(media, selectedAlbum) { if (selectedAlbum == "All media") media else media.filter { it.album == selectedAlbum } }
+    val visible = remember(media, selectedAlbum, hiddenFolders) {
+        (if (selectedAlbum == "All media") media else media.filter { it.album == selectedAlbum })
+            .filter { it.album !in hiddenFolders }
+    }
 
     // Full-screen media is deliberately immersive; the viewer itself has no controls or labels.
     SideEffect {
@@ -260,7 +332,7 @@ private fun GalleryApp() {
     }
     val hasInnerScreen = viewerStartUri != null || actionMenu || settingsOpen || manageMediaInfoOpen || albumMenu ||
         infoItem != null || renameItem != null || statusMessage != null || transferMode != null ||
-        selected.isNotEmpty() || (tab == "Folders" && selectedAlbum != "All media") || tab != "Reel"
+        selected.isNotEmpty() || selectedFolder != null || (tab == "Folders" && selectedAlbum != "All media") || tab != "Reel"
     BackHandler(enabled = hasInnerScreen) {
         when {
             viewerStartUri != null -> { viewerStartUri = null; selected = emptySet() }
@@ -273,6 +345,7 @@ private fun GalleryApp() {
             renameItem != null -> renameItem = null
             statusMessage != null -> statusMessage = null
             selected.isNotEmpty() -> selected = emptySet()
+            selectedFolder != null -> selectedFolder = null
             tab == "Folders" && selectedAlbum != "All media" -> selectedAlbum = "All media"
             tab != "Reel" -> { tab = "Reel"; selectedAlbum = "All media" }
         }
@@ -291,57 +364,82 @@ private fun GalleryApp() {
                     Column(Modifier.weight(1f)) {
                         Text(when {
                             transferMode != null -> "Choose destination"
+                            selectedFolder != null -> selectedFolder!!
                             tab == "Folders" && selectedAlbum != "All media" -> selectedAlbum
                             selected.isNotEmpty() -> "${selected.size} selected"
                             else -> "instaGallery"
                         }, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(when {
                             transferMode != null -> "${transferMode} to a folder"
+                            selectedFolder != null -> "Folder selected • ${media.count { it.album == selectedFolder }} items"
                             selected.isNotEmpty() -> "${selected.size} selected • ${visible.size} items"
                             else -> "${visible.size} items"
                         }, color = Color.LightGray, fontSize = 12.sp)
                     }
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                        if (selected.isNotEmpty()) {
-                            IconButton(onClick = { shareMedia(media.filter { it.uri in selected }) }) {
-                                Icon(Icons.Default.Share, "Share selected media", tint = Color.White)
-                            }
-                        }
-                        Box {
-                            IconButton(onClick = { actionMenu = true }) {
-                                Icon(Icons.Default.MoreVert, "More options", tint = Color.White)
-                            }
-                            DropdownMenu(expanded = actionMenu, onDismissRequest = { actionMenu = false }) {
-                            if (tab == "Reel" || selectedAlbum != "All media") {
-                                DropdownMenuItem(text = { Text(if (visible.isNotEmpty() && selected.size == visible.size) "Deselect all" else "Select all") },
-                                    leadingIcon = { Icon(Icons.Default.Collections, null) },
-                                    onClick = {
-                                        selected = if (visible.isNotEmpty() && selected.size == visible.size) emptySet() else visible.map { it.uri }.toSet()
-                                        actionMenu = false
-                                    })
-                            }
-                            if (selected.isEmpty()) {
-                                DropdownMenuItem(text = { Text("Settings") }, leadingIcon = { Icon(Icons.Default.Settings, null) }, onClick = {
-                                    actionMenu = false
-                                    settingsOpen = true
-                                })
-                            }
-                            if (selected.isNotEmpty()) {
-                            DropdownMenuItem(text = { Text("Share") }, leadingIcon = { Icon(Icons.Default.Share, null) }, onClick = { actionMenu = false; shareMedia(media.filter { it.uri in selected }) })
-                            DropdownMenuItem(text = { Text("Details") }, leadingIcon = { Icon(Icons.Default.Info, null) }, onClick = { actionMenu = false; media.firstOrNull { it.uri in selected }?.let { infoItem = it } })
-                            DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Default.Edit, null) }, onClick = { actionMenu = false; media.firstOrNull { it.uri in selected }?.let { renameItem = it; renameText = it.name } })
-                            DropdownMenuItem(text = { Text("Copy") }, leadingIcon = { Icon(Icons.Default.ContentCopy, null) }, onClick = { beginTransfer("Copy") })
-                            DropdownMenuItem(text = { Text("Move") }, leadingIcon = { Icon(Icons.Default.DriveFileMove, null) }, onClick = {
-                                actionMenu = false
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !MediaStore.canManageMedia(context)) {
-                                    manageMediaInfoOpen = true
-                                } else {
-                                    beginTransfer("Move")
+                        if (selected.isNotEmpty() || selectedFolder != null) {
+                            Box {
+                                IconButton(onClick = { actionMenu = true }) {
+                                    Icon(Icons.Default.MoreVert, "Selection actions", tint = Color.White)
                                 }
-                            })
-                            DropdownMenuItem(text = { Text("Delete") }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = Color(0xFFFF6680)) }, onClick = { actionMenu = false; deleteMedia(media.filter { it.uri in selected }) })
+                                DropdownMenu(expanded = actionMenu, onDismissRequest = { actionMenu = false }) {
+                                    if (selectedFolder != null) {
+                                        val folderName = selectedFolder!!
+                                        DropdownMenuItem(text = { Text("Details") }, leadingIcon = { Icon(Icons.Default.Info, null) },
+                                            onClick = { actionMenu = false; folderDetailsName = folderName })
+                                        DropdownMenuItem(text = { Text("Rename folder") }, leadingIcon = { Icon(Icons.Default.Edit, null) },
+                                            onClick = { actionMenu = false; folderRenameTarget = folderName; folderRenameText = folderName })
+                                        DropdownMenuItem(text = { Text(if (folderName in hiddenFolders) "Unhide folder" else "Hide folder") },
+                                            leadingIcon = { Icon(if (folderName in hiddenFolders) Icons.Default.Visibility else Icons.Default.VisibilityOff, null) },
+                                            onClick = { setFolderHidden(folderName, folderName !in hiddenFolders) })
+                                        DropdownMenuItem(text = { Text("Delete folder") }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = Color(0xFFFF6680)) },
+                                            onClick = {
+                                                actionMenu = false
+                                                selectedFolder = null
+                                                deleteMedia(media.filter { it.album == folderName })
+                                            })
+                                    } else {
+                                        if (tab == "Reel" || selectedAlbum != "All media") {
+                                            DropdownMenuItem(
+                                                text = { Text(if (visible.isNotEmpty() && selected.size == visible.size) "Deselect all" else "Select all") },
+                                                leadingIcon = { Icon(Icons.Default.Collections, null) },
+                                                onClick = {
+                                                    selected = if (visible.isNotEmpty() && selected.size == visible.size) emptySet() else visible.map { it.uri }.toSet()
+                                                    actionMenu = false
+                                                })
+                                        }
+                                        DropdownMenuItem(text = { Text("Share") }, leadingIcon = { Icon(Icons.Default.Share, null) }, onClick = {
+                                            actionMenu = false
+                                            shareMedia(media.filter { it.uri in selected })
+                                        })
+                                        DropdownMenuItem(text = { Text("Details") }, leadingIcon = { Icon(Icons.Default.Info, null) }, onClick = {
+                                            actionMenu = false
+                                            media.firstOrNull { it.uri in selected }?.let { infoItem = it }
+                                        })
+                                        DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Default.Edit, null) }, onClick = {
+                                            actionMenu = false
+                                            media.firstOrNull { it.uri in selected }?.let { renameItem = it; renameText = it.name }
+                                        })
+                                        DropdownMenuItem(text = { Text("Copy") }, leadingIcon = { Icon(Icons.Default.ContentCopy, null) }, onClick = { beginTransfer("Copy") })
+                                        DropdownMenuItem(text = { Text("Move") }, leadingIcon = { Icon(Icons.Default.DriveFileMove, null) }, onClick = {
+                                            actionMenu = false
+                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !MediaStore.canManageMedia(context)) {
+                                                manageMediaInfoOpen = true
+                                            } else {
+                                                beginTransfer("Move")
+                                            }
+                                        })
+                                        DropdownMenuItem(text = { Text("Delete") }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = Color(0xFFFF6680)) }, onClick = {
+                                            actionMenu = false
+                                            deleteMedia(media.filter { it.uri in selected })
+                                        })
+                                    }
+                                }
                             }
-                        }
+                        } else if (tab == "Folders") {
+                            IconButton(onClick = { settingsOpen = true }) {
+                                Icon(Icons.Default.Settings, "Settings", tint = Color.White)
+                            }
                         }
                     }
                 }
@@ -353,18 +451,35 @@ private fun GalleryApp() {
                             Button(onClick = ::requestPermissions) { Text("Allow gallery access") }
                         }
                     }
-                    visible.isEmpty() -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { Text("No photos or videos found", color = Color.LightGray) }
+                    visible.isEmpty() && !(tab == "Folders" && selectedAlbum == "All media") -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { Text("No photos or videos found", color = Color.LightGray) }
                     tab == "Folders" && selectedAlbum == "All media" -> {
-                        val folders = media.groupBy { it.album }.toSortedMap()
+                        val folders = media.filter { it.album !in hiddenFolders }.groupBy { it.album }.toSortedMap()
                         if (folders.isEmpty()) {
                             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { Text("No folders found", color = Color.LightGray) }
                         } else {
                             LazyVerticalGrid(columns = GridCells.Fixed(2), modifier = Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 items(folders.keys.toList(), key = { it }) { folder ->
                                     val folderItems = folders[folder].orEmpty()
-                                    FolderTile(folder, folderItems, imageLoader = thumbnailLoader, onClick = {
-                                        if (transferMode != null) transferToFolder(folder) else selectedAlbum = folder
-                                    })
+                                    FolderTile(
+                                        name = folder,
+                                        items = folderItems,
+                                        imageLoader = thumbnailLoader,
+                                        selected = selectedFolder == folder,
+                                        onClick = {
+                                            if (transferMode != null) {
+                                                transferToFolder(folder)
+                                            } else if (selectedFolder != null) {
+                                                selectedFolder = if (selectedFolder == folder) null else folder
+                                            } else {
+                                                selectedAlbum = folder
+                                            }
+                                        },
+                                        onLongClick = {
+                                            selected = emptySet()
+                                            selectedFolder = folder
+                                            actionMenu = false
+                                        }
+                                    )
                                 }
                             }
                         }
@@ -460,11 +575,55 @@ private fun GalleryApp() {
                     }
                 }
                 Row(Modifier.fillMaxWidth().navigationBarsPadding().background(Color(0xFF171717)).padding(vertical = 5.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    NavigationBarItem(selected = tab == "Folders", onClick = { tab = "Folders"; selectedAlbum = "All media" }, icon = { Icon(Icons.Default.Folder, null) }, label = { Text("Folders") })
-                    NavigationBarItem(selected = tab == "Reel", onClick = { tab = "Reel"; selectedAlbum = "All media" }, icon = { Icon(Icons.Default.PlayArrow, null) }, label = { Text("Reel") })
+                    NavigationBarItem(selected = tab == "Folders", onClick = { tab = "Folders"; selectedAlbum = "All media"; selectedFolder = null; selected = emptySet() }, icon = { Icon(Icons.Default.Folder, null) }, label = { Text("Folders") })
+                    NavigationBarItem(selected = tab == "Reel", onClick = { tab = "Reel"; selectedAlbum = "All media"; selectedFolder = null; selected = emptySet() }, icon = { Icon(Icons.Default.PlayArrow, null) }, label = { Text("Reel") })
                 }
             }
-            if (settingsOpen) AlertDialog(onDismissRequest = { settingsOpen = false }, title = { Text("Settings") }, text = { Text("instaGallery • Offline media gallery\nYour media stays on this device.") }, confirmButton = { TextButton(onClick = { settingsOpen = false }) { Text("Done") } })
+            if (settingsOpen) {
+                val allFolderNames = media.map { it.album }.distinct().sorted()
+                androidx.compose.ui.window.Dialog(
+                    onDismissRequest = { settingsOpen = false },
+                    properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+                ) {
+                    Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFF101010)) {
+                        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(20.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Settings", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                                IconButton(onClick = { settingsOpen = false }) {
+                                    Icon(Icons.Default.Close, "Close settings", tint = Color.White)
+                                }
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            Text("Hide or unhide folders", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Hidden folders won't appear in Folders or Reel. You can unhide them here.", color = Color.LightGray, fontSize = 13.sp)
+                            Spacer(Modifier.height(12.dp))
+                            if (allFolderNames.isEmpty()) {
+                                Text("No folders found yet.", color = Color.LightGray)
+                            } else {
+                                Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
+                                    allFolderNames.forEach { folder ->
+                                        Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(Icons.Default.Folder, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(26.dp))
+                                            Spacer(Modifier.width(12.dp))
+                                            Column(Modifier.weight(1f)) {
+                                                Text(folder, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                Text("${media.count { it.album == folder }} items • ${if (folder in hiddenFolders) "Hidden" else "Visible"}",
+                                                    color = Color.LightGray, fontSize = 12.sp)
+                                            }
+                                            TextButton(onClick = { setFolderHidden(folder, folder !in hiddenFolders) }) {
+                                                Text(if (folder in hiddenFolders) "Unhide" else "Hide")
+                                            }
+                                        }
+                                        Divider(color = Color(0xFF303030))
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(12.dp))
+                            Text("More settings will be added here.", color = Color.Gray, fontSize = 13.sp)
+                        }
+                    }
+                }
+            }
             if (manageMediaInfoOpen) AlertDialog(
                 onDismissRequest = { manageMediaInfoOpen = false },
                 title = { Text("Enable direct Move") },
@@ -491,6 +650,33 @@ private fun GalleryApp() {
                         albums.forEach { album -> TextButton(onClick = { selectedAlbum = album; tab = "Folders"; albumMenu = false }) { Text(album, maxLines = 1, overflow = TextOverflow.Ellipsis) } }
                     }
                 }, confirmButton = { TextButton(onClick = { albumMenu = false }) { Text("Close") } })
+            }
+            folderDetailsName?.let { folderName ->
+                AlertDialog(
+                    onDismissRequest = { folderDetailsName = null },
+                    title = { Text("Folder details") },
+                    text = {
+                        Column {
+                            Text("Name: $folderName")
+                            Text("Items: ${media.count { it.album == folderName }}")
+                            Text("Visibility: ${if (folderName in hiddenFolders) "Hidden" else "Visible"}")
+                            Text("Files remain on your device; hiding only removes this folder from instaGallery.")
+                        }
+                    },
+                    confirmButton = { TextButton(onClick = { folderDetailsName = null }) { Text("Done") } }
+                )
+            }
+            folderRenameTarget?.let { folderName ->
+                AlertDialog(
+                    onDismissRequest = { folderRenameTarget = null },
+                    title = { Text("Rename folder") },
+                    text = {
+                        OutlinedTextField(value = folderRenameText, onValueChange = { folderRenameText = it },
+                            singleLine = true, label = { Text("Folder name") })
+                    },
+                    confirmButton = { TextButton(onClick = { renameFolder(folderName, folderRenameText) }) { Text("Save") } },
+                    dismissButton = { TextButton(onClick = { folderRenameTarget = null }) { Text("Cancel") } }
+                )
             }
             infoItem?.let { item ->
                 AlertDialog(onDismissRequest = { infoItem = null }, title = { Text("Details") }, text = {
@@ -673,11 +859,20 @@ private fun Context.copyMediaToFolder(item: GalleryMedia, relativePath: String):
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun FolderTile(name: String, items: List<GalleryMedia>, imageLoader: ImageLoader, onClick: () -> Unit) {
+private fun FolderTile(
+    name: String,
+    items: List<GalleryMedia>,
+    imageLoader: ImageLoader,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
     val context = LocalContext.current
     val cover = items.firstOrNull()
     Column(
-        Modifier.fillMaxWidth().background(Color(0xFF191919), MaterialTheme.shapes.medium).combinedClickable(onClick = onClick, onLongClick = onClick)
+        Modifier.fillMaxWidth()
+            .background(if (selected) Color(0xFF503040) else Color(0xFF191919), MaterialTheme.shapes.medium)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
     ) {
         Box(Modifier.fillMaxWidth().aspectRatio(1.15f).background(Color.DarkGray)) {
             if (cover != null) {
@@ -690,6 +885,11 @@ private fun FolderTile(name: String, items: List<GalleryMedia>, imageLoader: Ima
                 )
             } else {
                 Icon(Icons.Default.Folder, null, tint = Color.LightGray, modifier = Modifier.align(Alignment.Center).size(48.dp))
+            }
+            if (selected) {
+                Box(Modifier.fillMaxSize().background(Color(0x5533A6FF)), contentAlignment = Alignment.TopEnd) {
+                    Text("✓", color = Color.White, fontSize = 22.sp, modifier = Modifier.padding(8.dp))
+                }
             }
             Icon(Icons.Default.Folder, null, tint = Color.White, modifier = Modifier.align(Alignment.TopStart).padding(8.dp).size(24.dp))
         }
