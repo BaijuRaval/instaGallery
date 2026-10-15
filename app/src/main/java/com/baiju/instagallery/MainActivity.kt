@@ -600,48 +600,63 @@ private fun GalleryApp() {
             )
         } else {
             Column(Modifier.fillMaxSize().background(Color(0xFF101010)).statusBarsPadding().animateContentSize()) {
-                if (selected.isNotEmpty()) {
-                    val allVisibleSelected = visible.isNotEmpty() && visible.all { it.uri in selected }
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = { selected = emptySet() }) {
-                            Icon(Icons.Default.Close, "Exit selection", tint = Color.White)
-                        }
-                        TextButton(
-                            onClick = { selected = if (allVisibleSelected) emptySet() else visible.map { it.uri }.toSet() },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("${selected.size}/${visible.size}", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                                Text(if (allVisibleSelected) "Deselect all" else "Select all", fontSize = 12.sp, color = Color.LightGray)
+                AnimatedContent(
+                    targetState = when {
+                        selected.isNotEmpty() -> "media" to null
+                        selectedFolder != null -> "folder" to selectedFolder
+                        else -> "normal" to null
+                    },
+                    transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(120)) },
+                    modifier = Modifier.fillMaxWidth().animateContentSize(),
+                    label = "headerActionTransition"
+                ) { headerTarget ->
+                    when (headerTarget.first) {
+                        "media" -> {
+                            val allVisibleSelected = visible.isNotEmpty() && visible.all { it.uri in selected }
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(onClick = { selected = emptySet() }) {
+                                    Icon(Icons.Default.Close, "Exit selection", tint = Color.White)
+                                }
+                                TextButton(
+                                    onClick = { selected = if (allVisibleSelected) emptySet() else visible.map { it.uri }.toSet() },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text("${selected.size}/${visible.size}", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                        Text(if (allVisibleSelected) "Deselect all" else "Select all", fontSize = 12.sp, color = Color.LightGray)
+                                    }
+                                }
                             }
                         }
-                    }
-                } else if (selectedFolder != null) {
-                    val folderName = selectedFolder!!
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = { selectedFolder = null }) {
-                            Icon(Icons.Default.Close, "Clear folder selection", tint = Color.White)
+                        "folder" -> {
+                            val folderName = headerTarget.second.orEmpty()
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(onClick = { selectedFolder = null }) {
+                                    Icon(Icons.Default.Close, "Clear folder selection", tint = Color.White)
+                                }
+                                Column(Modifier.weight(1f)) {
+                                    Text(folderName, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text("Folder selected • ${media.count { it.album == folderName }} items", color = Color.LightGray, fontSize = 12.sp)
+                                }
+                            }
                         }
-                        Column(Modifier.weight(1f)) {
-                            Text(folderName, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("Folder selected • ${media.count { it.album == folderName }} items", color = Color.LightGray, fontSize = 12.sp)
-                        }
-                    }
-                } else {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Collections, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(28.dp))
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(when {
-                                transferMode != null -> "Choose destination"
-                                tab == "Folders" && selectedAlbum != "All media" -> selectedAlbum
-                                else -> "instaGallery"
-                            }, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(if (transferMode != null) "${transferMode} to a folder" else "${visible.size} items", color = Color.LightGray, fontSize = 12.sp)
-                        }
-                        if (tab == "Folders" && transferMode == null) {
-                            IconButton(onClick = { settingsPage = "main" }) {
-                                Icon(Icons.Default.Settings, "Settings", tint = Color.White)
+                        else -> {
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Collections, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(28.dp))
+                                Spacer(Modifier.width(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(when {
+                                        transferMode != null -> "Choose destination"
+                                        tab == "Folders" && selectedAlbum != "All media" -> selectedAlbum
+                                        else -> "instaGallery"
+                                    }, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(if (transferMode != null) "${transferMode} to a folder" else "${visible.size} items", color = Color.LightGray, fontSize = 12.sp)
+                                }
+                                if (tab == "Folders" && transferMode == null) {
+                                    IconButton(onClick = { settingsPage = "main" }) {
+                                        Icon(Icons.Default.Settings, "Settings", tint = Color.White)
+                                    }
+                                }
                             }
                         }
                     }
@@ -869,40 +884,55 @@ private fun GalleryApp() {
                     }
                     }
                 }
-                if (selected.isNotEmpty()) {
-                    Row(Modifier.fillMaxWidth().navigationBarsPadding().background(Color(0xFF171717)).padding(horizontal = 2.dp, vertical = 4.dp).animateContentSize(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                        BottomAction("Details", Icons.Default.Info, Modifier.weight(1f)) { media.firstOrNull { it.uri in selected }?.let { infoItem = it } }
-                        BottomAction("Rename", Icons.Default.Edit, Modifier.weight(1f)) {
-                            val targets = media.filter { it.uri in selected }
-                            if (targets.size > 1) {
-                                renameItem = null
-                                renameMultipleItems = targets
-                                val firstName = targets.first().name
-                                renameText = if (firstName.lastIndexOf('.') > 0) firstName.substring(0, firstName.lastIndexOf('.')) else firstName
-                            } else {
-                                renameMultipleItems = emptyList()
-                                targets.firstOrNull()?.let { renameItem = it; renameText = it.name }
+                AnimatedContent(
+                    targetState = when {
+                        selected.isNotEmpty() -> "media" to null
+                        selectedFolder != null -> "folder" to selectedFolder
+                        else -> "tabs" to null
+                    },
+                    transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(120)) },
+                    modifier = Modifier.fillMaxWidth().animateContentSize(),
+                    label = "bottomActionTransition"
+                ) { footerTarget ->
+                    when (footerTarget.first) {
+                        "media" -> {
+                            Row(Modifier.fillMaxWidth().navigationBarsPadding().background(Color(0xFF171717)).padding(horizontal = 2.dp, vertical = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                                BottomAction("Details", Icons.Default.Info, Modifier.weight(1f)) { media.firstOrNull { it.uri in selected }?.let { infoItem = it } }
+                                BottomAction("Rename", Icons.Default.Edit, Modifier.weight(1f)) {
+                                    val targets = media.filter { it.uri in selected }
+                                    if (targets.size > 1) {
+                                        renameItem = null
+                                        renameMultipleItems = targets
+                                        val firstName = targets.first().name
+                                        renameText = if (firstName.lastIndexOf('.') > 0) firstName.substring(0, firstName.lastIndexOf('.')) else firstName
+                                    } else {
+                                        renameMultipleItems = emptyList()
+                                        targets.firstOrNull()?.let { renameItem = it; renameText = it.name }
+                                    }
+                                }
+                                BottomAction("Copy", Icons.Default.ContentCopy, Modifier.weight(1f)) { beginTransfer("Copy") }
+                                BottomAction("Move", Icons.Default.DriveFileMove, Modifier.weight(1f)) {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !MediaStore.canManageMedia(context)) manageMediaInfoOpen = true else beginTransfer("Move")
+                                }
+                                BottomAction("Delete", Icons.Default.Delete, Modifier.weight(1f), tint = Color(0xFFFF6680)) { deleteMedia(media.filter { it.uri in selected }) }
+                                BottomAction("Share", Icons.Default.Share, Modifier.weight(1f)) { shareMedia(media.filter { it.uri in selected }) }
                             }
                         }
-                        BottomAction("Copy", Icons.Default.ContentCopy, Modifier.weight(1f)) { beginTransfer("Copy") }
-                        BottomAction("Move", Icons.Default.DriveFileMove, Modifier.weight(1f)) {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !MediaStore.canManageMedia(context)) manageMediaInfoOpen = true else beginTransfer("Move")
+                        "folder" -> {
+                            val folderName = footerTarget.second.orEmpty()
+                            Row(Modifier.fillMaxWidth().navigationBarsPadding().background(Color(0xFF171717)).padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                                BottomAction("Details", Icons.Default.Info, Modifier.weight(1f)) { folderDetailsName = folderName }
+                                BottomAction("Rename", Icons.Default.Edit, Modifier.weight(1f)) { folderRenameTarget = folderName; folderRenameText = folderName }
+                                BottomAction(if (folderName in hiddenFolders) "Unhide" else "Hide", if (folderName in hiddenFolders) Icons.Default.Visibility else Icons.Default.VisibilityOff, Modifier.weight(1f)) { setFolderHidden(folderName, folderName !in hiddenFolders) }
+                                BottomAction("Delete", Icons.Default.Delete, Modifier.weight(1f), tint = Color(0xFFFF6680)) { folderRemoveTarget = folderName }
+                            }
                         }
-                        BottomAction("Delete", Icons.Default.Delete, Modifier.weight(1f), tint = Color(0xFFFF6680)) { deleteMedia(media.filter { it.uri in selected }) }
-                        BottomAction("Share", Icons.Default.Share, Modifier.weight(1f)) { shareMedia(media.filter { it.uri in selected }) }
-                    }
-                } else if (selectedFolder != null) {
-                    val folderName = selectedFolder!!
-                    Row(Modifier.fillMaxWidth().navigationBarsPadding().background(Color(0xFF171717)).padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                        BottomAction("Details", Icons.Default.Info, Modifier.weight(1f)) { folderDetailsName = folderName }
-                        BottomAction("Rename", Icons.Default.Edit, Modifier.weight(1f)) { folderRenameTarget = folderName; folderRenameText = folderName }
-                        BottomAction(if (folderName in hiddenFolders) "Unhide" else "Hide", if (folderName in hiddenFolders) Icons.Default.Visibility else Icons.Default.VisibilityOff, Modifier.weight(1f)) { setFolderHidden(folderName, folderName !in hiddenFolders) }
-                        BottomAction("Delete", Icons.Default.Delete, Modifier.weight(1f), tint = Color(0xFFFF6680)) { folderRemoveTarget = folderName }
-                    }
-                } else {
-                    Row(Modifier.fillMaxWidth().navigationBarsPadding().background(Color(0xFF171717)).padding(vertical = 5.dp).animateContentSize(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                        NavigationBarItem(selected = tab == "Folders", onClick = { tab = "Folders"; selectedAlbum = "All media"; selectedFolder = null; selected = emptySet() }, icon = { Icon(Icons.Default.Folder, null) }, label = { Text("Folders") })
-                        NavigationBarItem(selected = tab == "Reel", onClick = { tab = "Reel"; selectedAlbum = "All media"; selectedFolder = null; selected = emptySet() }, icon = { Icon(Icons.Default.PlayArrow, null) }, label = { Text("Reel") })
+                        else -> {
+                            Row(Modifier.fillMaxWidth().navigationBarsPadding().background(Color(0xFF171717)).padding(vertical = 5.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                                NavigationBarItem(selected = tab == "Folders", onClick = { tab = "Folders"; selectedAlbum = "All media"; selectedFolder = null; selected = emptySet() }, icon = { Icon(Icons.Default.Folder, null) }, label = { Text("Folders") })
+                                NavigationBarItem(selected = tab == "Reel", onClick = { tab = "Reel"; selectedAlbum = "All media"; selectedFolder = null; selected = emptySet() }, icon = { Icon(Icons.Default.PlayArrow, null) }, label = { Text("Reel") })
+                            }
+                        }
                     }
                 }
             }
