@@ -13,6 +13,7 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -271,6 +272,7 @@ private fun EmptyDocumentsMessage(message: String) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun DocumentTile(document: BrowserDocument, showPath: Boolean, onClick: () -> Unit) {
     val icon = when {
