@@ -21,12 +21,8 @@ import java.io.File
 import java.io.FileOutputStream
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.animation.expandIn
 import androidx.compose.animation.shrinkOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideInVertically
@@ -41,6 +37,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.IntentSenderRequest
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -170,7 +167,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         window.statusBarColor = android.graphics.Color.BLACK
         window.navigationBarColor = android.graphics.Color.BLACK
-        WindowCompat.setDecorFitsSystemWindows(window, true)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
         setContent { GalleryApp() }
     }
 }
@@ -183,8 +184,8 @@ private fun GalleryApp() {
     var hasPermission by remember { mutableStateOf(context.hasMediaPermission()) }
     var media by remember { mutableStateOf(emptyList<GalleryMedia>()) }
     var selectedAlbum by remember { mutableStateOf("All media") }
-    var viewerStartUri by remember { mutableStateOf<Uri?>(null) }
-    var viewerCurrentUri by remember { mutableStateOf<Uri?>(null) }
+    var viewerStartUri by rememberSaveable { mutableStateOf<Uri?>(null) }
+    var viewerCurrentUri by rememberSaveable { mutableStateOf<Uri?>(null) }
     var pendingGridScrollUri by remember { mutableStateOf<Uri?>(null) }
     var resumeHandled by remember { mutableStateOf(false) }
     val settingsPrefs = remember(context) {
@@ -691,8 +692,8 @@ private fun GalleryApp() {
         AnimatedContent(
             targetState = viewerStart.takeIf { visible.isNotEmpty() },
             transitionSpec = {
-                (fadeIn(tween(280)) + scaleIn(tween(280), initialScale = 0.93f)) togetherWith
-                    (fadeOut(tween(180)) + scaleOut(tween(180), targetScale = 1.025f))
+                expandIn(expandFrom = Alignment.Center, animationSpec = tween(320, easing = FastOutSlowInEasing)) togetherWith
+                    shrinkOut(shrinkTowards = Alignment.Center, animationSpec = tween(220, easing = FastOutSlowInEasing))
             },
             label = "mediaViewerTransition"
         ) { animatedViewerStart ->
