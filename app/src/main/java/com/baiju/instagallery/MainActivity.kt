@@ -1363,7 +1363,12 @@ private fun ReelsViewer(
         if (!item.isVideo && autoPlayNext) {
             val page = pagerState.currentPage
             delay(5_000)
-            if (pagerState.currentPage == page && items.isNotEmpty()) {
+            if (
+                pagerState.currentPage == page &&
+                items.isNotEmpty() &&
+                !pagerState.isScrollInProgress &&
+                !currentMediaZoomed
+            ) {
                 pagerState.animateScrollToPage(if (page < items.lastIndex) page + 1 else 0)
             }
         }
@@ -1386,10 +1391,12 @@ private fun ReelsViewer(
                     autoPlayNext = autoPlayNext,
                     rememberLastPlayed = rememberLastPlayed,
                     onEnded = {
-                        if (autoPlayNext) {
+                        if (autoPlayNext && !currentMediaZoomed && !pagerState.isScrollInProgress) {
                             scope.launch {
                                 val current = pagerState.currentPage
-                                pagerState.animateScrollToPage(if (current < items.lastIndex) current + 1 else 0)
+                                if (!pagerState.isScrollInProgress && !currentMediaZoomed) {
+                                    pagerState.animateScrollToPage(if (current < items.lastIndex) current + 1 else 0)
+                                }
                             }
                         }
                     },
@@ -1459,6 +1466,22 @@ private fun ReelsViewer(
                                 currentMediaZoomed = zoom > 1.001f
                             }
                         }
+                        .graphicsLayer(
+                            scaleX = zoom * rotationFit,
+                            scaleY = zoom * rotationFit,
+                            translationX = pan.x,
+                            translationY = pan.y,
+                            rotationZ = rotation,
+                            transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
+                        ),
+                    contentScale = ContentScale.Fit
+                )
+            }
+        }
+    }
+}
+
+      }
                         .graphicsLayer(
                             scaleX = zoom * rotationFit,
                             scaleY = zoom * rotationFit,
@@ -1642,8 +1665,11 @@ private fun VideoPage(
 
                         if (multiTouch) {
                             val change = pointers.first()
-                            if (zoom > 1.001f && change.position != change.previousPosition) {
-                                pan += change.position - change.previousPosition
+                            if (change.position != change.previousPosition) {
+                                if (zoom > 1.001f) {
+                                    pan += change.position - change.previousPosition
+                                }
+                                // Keep the last remaining finger in the pinch gesture from scrolling the pager.
                                 change.consume()
                             }
                             continue
