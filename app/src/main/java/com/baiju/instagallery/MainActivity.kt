@@ -23,6 +23,8 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandIn
+import androidx.compose.animation.shrinkOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
@@ -184,7 +186,6 @@ private fun GalleryApp() {
     var viewerStartUri by remember { mutableStateOf<Uri?>(null) }
     var viewerCurrentUri by remember { mutableStateOf<Uri?>(null) }
     var pendingGridScrollUri by remember { mutableStateOf<Uri?>(null) }
-    var blinkMediaUri by remember { mutableStateOf<Uri?>(null) }
     var resumeHandled by remember { mutableStateOf(false) }
     val settingsPrefs = remember(context) {
         context.getSharedPreferences("instagallery_settings", Context.MODE_PRIVATE)
@@ -194,9 +195,6 @@ private fun GalleryApp() {
     }
     var rememberLastPlayed by remember(context) {
         mutableStateOf(settingsPrefs.getBoolean("remember_last_played", false))
-    }
-    var mediaAutoFitToScreen by remember(context) {
-        mutableStateOf(settingsPrefs.getBoolean("media_auto_fit_to_screen", true))
     }
     var tab by remember { mutableStateOf("Reel") }
     var selected by remember { mutableStateOf(setOf<Uri>()) }
@@ -575,16 +573,8 @@ private fun GalleryApp() {
             if (index >= 0) {
                 delay(80)
                 mediaGridState.scrollToItem(index)
-                blinkMediaUri = target
             }
             pendingGridScrollUri = null
-        }
-    }
-
-    LaunchedEffect(blinkMediaUri) {
-        if (blinkMediaUri != null) {
-            delay(1_000)
-            blinkMediaUri = null
         }
     }
 
@@ -671,11 +661,6 @@ private fun GalleryApp() {
                 hiddenFolders = hiddenFolders,
                 autoPlayNext = autoPlayNext,
                 rememberLastPlayed = rememberLastPlayed,
-                mediaAutoFitToScreen = mediaAutoFitToScreen,
-                onToggleMediaAutoFitToScreen = { enabled ->
-                    mediaAutoFitToScreen = enabled
-                    settingsPrefs.edit().putBoolean("media_auto_fit_to_screen", enabled).apply()
-                },
                 onToggleAutoPlayNext = { enabled ->
                     autoPlayNext = enabled
                     settingsPrefs.edit().putBoolean("auto_play_next", enabled).apply()
@@ -719,7 +704,6 @@ private fun GalleryApp() {
                 imageLoader = thumbnailLoader,
                 autoPlayNext = autoPlayNext,
                 rememberLastPlayed = rememberLastPlayed,
-                mediaAutoFitToScreen = mediaAutoFitToScreen,
                 onPageViewed = { uri ->
                     viewerCurrentUri = uri
                     val savedUri = settingsPrefs.getString("last_media_uri", null)
@@ -828,8 +812,13 @@ private fun GalleryApp() {
                                 (fadeOut(tween(190)) + slideOutHorizontally(tween(190)) { width -> if (towardReel) -width / 4 else width / 4 })
                         } else {
                             val openingFolder = targetState.second != "All media"
-                            (fadeIn(tween(270)) + slideInVertically(tween(270)) { height -> if (openingFolder) height / 8 else -height / 8 }) togetherWith
-                                (fadeOut(tween(190)) + slideOutVertically(tween(190)) { height -> if (openingFolder) -height / 8 else height / 8 })
+                            if (openingFolder) {
+                                (fadeIn(tween(300)) + expandIn(expandFrom = Alignment.Center, animationSpec = tween(300))) togetherWith
+                                    (fadeOut(tween(200)) + shrinkOut(shrinkTowards = Alignment.Center, animationSpec = tween(200)))
+                            } else {
+                                (fadeIn(tween(300)) + expandIn(expandFrom = Alignment.TopCenter, animationSpec = tween(300))) togetherWith
+                                    (fadeOut(tween(200)) + shrinkOut(shrinkTowards = Alignment.Center, animationSpec = tween(200)))
+                            }
                         }
                     },
                     modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -1045,8 +1034,7 @@ private fun GalleryApp() {
                             items(animatedVisible, key = { it.uri.toString() }) { item ->
                                 Box(Modifier.animateItemPlacement().animateContentSize()) {
                                     MediaThumbnail(
-                                        item, item.uri in selected, thumbnailLoader, thumbnailRevision,
-                                        highlighted = item.uri == blinkMediaUri
+                                        item, item.uri in selected, thumbnailLoader, thumbnailRevision
                                     )
                                 }
                             }
@@ -1324,7 +1312,6 @@ private fun SettingsScreen(
     hiddenFolders: Set<String>,
     autoPlayNext: Boolean,
     rememberLastPlayed: Boolean,
-    mediaAutoFitToScreen: Boolean,
     onToggleMediaAutoFitToScreen: (Boolean) -> Unit,
     onToggleAutoPlayNext: (Boolean) -> Unit,
     onToggleRememberLastPlayed: (Boolean) -> Unit,
@@ -1413,12 +1400,6 @@ private fun SettingsScreen(
                     subtitle = "Reopen the last viewed item and resume video time",
                     checked = rememberLastPlayed,
                     onCheckedChange = onToggleRememberLastPlayed
-                )
-                PlaybackSettingRow(
-                    title = "Media auto fit to screen",
-                    subtitle = "On: open each photo and video fitted to the screen. Double-tap always toggles fit and screen-fill.",
-                    checked = mediaAutoFitToScreen,
-                    onCheckedChange = onToggleMediaAutoFitToScreen
                 )
             }
         }
@@ -1764,23 +1745,10 @@ private fun MediaThumbnail(
     item: GalleryMedia,
     selected: Boolean,
     imageLoader: ImageLoader,
-    thumbnailRevision: Int,
-    highlighted: Boolean = false
+    thumbnailRevision: Int
 ) {
     val context = LocalContext.current
     val request = rememberThumbnailRequest(context, item, thumbnailRevision)
-    var flashOn by remember(item.uri) { mutableStateOf(false) }
-    LaunchedEffect(highlighted) {
-        if (highlighted) {
-            repeat(4) {
-                flashOn = !flashOn
-                delay(125)
-            }
-            flashOn = false
-        } else {
-            flashOn = false
-        }
-    }
     Box(Modifier.aspectRatio(0.78f).background(if (selected) Color(0xFF503040) else Color.DarkGray)) {
         AsyncImage(model = request,
             imageLoader = imageLoader, contentDescription = item.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
@@ -1788,7 +1756,6 @@ private fun MediaThumbnail(
         if (selected) Box(Modifier.fillMaxSize().background(Color(0x6633A6FF)), contentAlignment = Alignment.TopEnd) {
             Text("✓", color = Color.White, fontSize = 22.sp, modifier = Modifier.padding(5.dp))
         }
-        if (flashOn) Box(Modifier.fillMaxSize().background(Color(0x99FF4D7D)))
     }
 }
 
@@ -1800,7 +1767,6 @@ private fun ReelsViewer(
     imageLoader: ImageLoader,
     autoPlayNext: Boolean,
     rememberLastPlayed: Boolean,
-    mediaAutoFitToScreen: Boolean,
     onPageViewed: (Uri) -> Unit
 ) {
     val context = LocalContext.current
@@ -1855,8 +1821,7 @@ private fun ReelsViewer(
                     playing = playing,
                     autoPlayNext = autoPlayNext,
                     rememberLastPlayed = rememberLastPlayed,
-                    mediaAutoFitToScreen = mediaAutoFitToScreen,
-                    onEnded = {
+                        onEnded = {
                         if (autoPlayNext && !currentMediaZoomed && !pagerState.isScrollInProgress) {
                             scope.launch {
                                 val current = pagerState.currentPage
@@ -1896,18 +1861,12 @@ private fun ReelsViewer(
                 )
                 val latestScreenFillZoom by rememberUpdatedState(screenFillZoom)
                 var initialFitApplied by remember(item.uri) { mutableStateOf(false) }
-                LaunchedEffect(item.uri, mediaAutoFitToScreen, viewportSize, imageAspectRatio) {
+                LaunchedEffect(item.uri, viewportSize, imageAspectRatio) {
                     if (!initialFitApplied && viewportSize.width > 0 && viewportSize.height > 0 && imageAspectRatio > 0f) {
                         pan = Offset.Zero
-                        if (mediaAutoFitToScreen) {
-                            zoom = 1f
-                            screenFillActive = false
-                            currentMediaZoomed = false
-                        } else {
-                            zoom = latestScreenFillZoom
-                            screenFillActive = true
-                            currentMediaZoomed = zoom > 1.001f
-                        }
+                        zoom = 1f
+                        screenFillActive = false
+                        currentMediaZoomed = false
                         initialFitApplied = true
                     }
                 }
@@ -2055,7 +2014,6 @@ private fun VideoPage(
     playing: Boolean,
     autoPlayNext: Boolean,
     rememberLastPlayed: Boolean,
-    mediaAutoFitToScreen: Boolean,
     onEnded: () -> Unit,
     onTogglePlay: () -> Unit,
     onZoomChanged: (Boolean) -> Unit
@@ -2093,23 +2051,18 @@ private fun VideoPage(
     )
     val latestScreenFillZoom by rememberUpdatedState(screenFillZoom)
     var initialFitApplied by remember(item.uri) { mutableStateOf(false) }
-    LaunchedEffect(active, mediaAutoFitToScreen, viewportSize, videoAspectRatio) {
+    LaunchedEffect(active, viewportSize, videoAspectRatio) {
         if (active && !initialFitApplied && viewportSize.width > 0 && viewportSize.height > 0 && videoAspectRatio > 0f) {
             pan = Offset.Zero
-            if (mediaAutoFitToScreen) {
-                zoom = 1f
-                screenFillActive = false
-                onZoomChanged(false)
-            } else {
-                zoom = latestScreenFillZoom
-                screenFillActive = true
-                onZoomChanged(zoom > 1.001f)
-            }
+            zoom = 1f
+            screenFillActive = false
+            onZoomChanged(false)
             initialFitApplied = true
         }
     }
     var seekBarVisible by remember(item.uri) { mutableStateOf(false) }
     var fastForwarding by remember(item.uri) { mutableStateOf(false) }
+    var suppressTapAfterFastForward by remember(item.uri) { mutableStateOf(false) }
     var currentPositionMs by remember(item.uri) { mutableLongStateOf(initialPositionMs) }
     var durationMs by remember(item.uri) { mutableLongStateOf(item.durationMs.coerceAtLeast(0L)) }
 
@@ -2174,7 +2127,15 @@ private fun VideoPage(
         Modifier.fillMaxSize().background(Color.Black)
             .pointerInput(item.uri) {
                 detectTapGestures(
-                    onTap = { if (active) onTogglePlay() },
+                    onTap = {
+                        if (active) {
+                            if (suppressTapAfterFastForward) {
+                                suppressTapAfterFastForward = false
+                            } else {
+                                onTogglePlay()
+                            }
+                        }
+                    },
                     onDoubleTap = {
                         if (active) {
                             val target = if (screenFillActive) 1f else latestScreenFillZoom
@@ -2218,6 +2179,7 @@ private fun VideoPage(
 
                         if (event == null) {
                             longPressTriggered = true
+                            suppressTapAfterFastForward = true
                             fastForwarding = true
                             player.setPlaybackSpeed(2f)
                             continue
@@ -2335,6 +2297,11 @@ private fun VideoPage(
                     if (longPressTriggered && !horizontalSeeking) {
                         player.setPlaybackSpeed(1f)
                         fastForwarding = false
+                        // Guard against the tap detector interpreting release as a normal tap.
+                        rotationScope.launch {
+                            delay(450)
+                            suppressTapAfterFastForward = false
+                        }
                     }
                     seekBarVisible = false
                     onZoomChanged(zoom > 1.001f || screenFillActive)
