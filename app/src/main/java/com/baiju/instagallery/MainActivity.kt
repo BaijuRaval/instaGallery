@@ -366,12 +366,26 @@ private fun GalleryApp() {
             media = loadedMedia
         }
     }
-    // Start persistent thumbnail generation right after MediaStore returns, not when a folder is opened.
-    // Existing cache files are checked/reused; only missing or changed media is decoded.
-    LaunchedEffect(media) {
+    val visible = remember(media, selectedAlbum, hiddenFolders) {
+        (if (selectedAlbum == "All media") media else media.filter { it.album == selectedAlbum })
+            .filter { it.album !in hiddenFolders }
+    }
+
+    // Always prioritize what the user is looking at now. Opening a folder cancels/reorders this
+    // background queue so its thumbnails are generated before unrelated gallery items.
+    LaunchedEffect(media, tab, selectedAlbum, hiddenFolders) {
         if (media.isEmpty()) return@LaunchedEffect
+        val prioritized = when {
+            tab == "Folders" && selectedAlbum != "All media" -> visible
+            tab == "Folders" -> {
+                val coverItems = visible.groupBy { it.album }.values.mapNotNull { it.firstOrNull() }
+                coverItems + visible.take(30)
+            }
+            else -> visible.take(36)
+        }
+        val orderedItems = (prioritized + media).distinctBy { it.uri }
         val cacheSemaphore = Semaphore(2)
-        media.chunked(16).forEach { batch ->
+        orderedItems.chunked(4).forEach { batch ->
             val changed = coroutineScope {
                 batch.map { item ->
                     async(Dispatchers.IO) {
@@ -379,12 +393,10 @@ private fun GalleryApp() {
                     }
                 }.awaitAll()
             }.any { it }
+            // Refresh cache-file-backed thumbnail requests every few completed items,
+            // not after a whole-library batch has finished.
             if (changed) thumbnailRevision++
         }
-    }
-    val visible = remember(media, selectedAlbum, hiddenFolders) {
-        (if (selectedAlbum == "All media") media else media.filter { it.album == selectedAlbum })
-            .filter { it.album !in hiddenFolders }
     }
 
     // Full-screen media is deliberately immersive; the viewer itself has no controls or labels.
@@ -857,33 +869,37 @@ private fun Context.thumbnailCacheFile(item: GalleryMedia): File {
 
 private fun Context.ensureThumbnailCache(item: GalleryMedia): Boolean {
     val target = thumbnailCacheFile(item)
-    if (target.isFile && target.length() > 0L) return false
-    val directory = target.parentFile ?: return false
-    if (!directory.exists() && !directory.mkdirs()) return false
-    var bitmap: Bitmap? = null
-    val temporary = File(directory, target.name + ".tmp")
-    return try {
-        bitmap = if (item.isVideo) createVideoThumbnail(item) else createImageThumbnail(item.uri)
-        if (bitmap == null) return false
-        val wrote = FileOutputStream(temporary).use { output ->
-            val ok = bitmap!!.compress(Bitmap.CompressFormat.JPEG, 84, output)
-            output.flush()
-            ok
-        }
-        if (!wrote) {
+    // Two queue entries may overlap briefly when the user switches folders during decoding.
+    // Lock on the destination so one thumbnail is never generated/written twice at once.
+    return synchronized(target.absolutePath.intern()) {
+        if (target.isFile && target.length() > 0L) return@synchronized false
+        val directory = target.parentFile ?: return@synchronized false
+        if (!directory.exists() && !directory.mkdirs()) return@synchronized false
+        var bitmap: Bitmap? = null
+        val temporary = File(directory, target.name + ".tmp")
+        try {
+            bitmap = if (item.isVideo) createVideoThumbnail(item) else createImageThumbnail(item.uri)
+            if (bitmap == null) return@synchronized false
+            val wrote = FileOutputStream(temporary).use { output ->
+                val ok = bitmap!!.compress(Bitmap.CompressFormat.JPEG, 84, output)
+                output.flush()
+                ok
+            }
+            if (!wrote) {
+                temporary.delete()
+                false
+            } else if (temporary.renameTo(target)) {
+                true
+            } else {
+                temporary.delete()
+                target.isFile && target.length() > 0L
+            }
+        } catch (_: Exception) {
             temporary.delete()
             false
-        } else if (temporary.renameTo(target)) {
-            true
-        } else {
-            temporary.delete()
-            target.isFile && target.length() > 0L
+        } finally {
+            bitmap?.recycle()
         }
-    } catch (_: Exception) {
-        temporary.delete()
-        false
-    } finally {
-        bitmap?.recycle()
     }
 }
 
