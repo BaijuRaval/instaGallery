@@ -1312,7 +1312,6 @@ private fun SettingsScreen(
     hiddenFolders: Set<String>,
     autoPlayNext: Boolean,
     rememberLastPlayed: Boolean,
-    onToggleMediaAutoFitToScreen: (Boolean) -> Unit,
     onToggleAutoPlayNext: (Boolean) -> Unit,
     onToggleRememberLastPlayed: (Boolean) -> Unit,
     onBack: () -> Unit,
