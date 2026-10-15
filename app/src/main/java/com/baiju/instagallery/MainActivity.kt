@@ -1387,7 +1387,7 @@ private fun GalleryMenuScreen(
                 modifier = Modifier.weight(1f)
             ) {
                 Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.GridView, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(24.dp))
+                    Icon(Icons.Default.Collections, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(24.dp))
                     Spacer(Modifier.width(10.dp))
                     Text("All", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                 }
