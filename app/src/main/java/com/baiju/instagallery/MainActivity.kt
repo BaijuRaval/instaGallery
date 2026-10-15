@@ -313,6 +313,20 @@ private fun GalleryApp() {
         pendingRenameTotalCount = 0
     }
 
+    fun requestPermissions() {
+        val permissions = when {
+            Build.VERSION.SDK_INT >= 34 -> arrayOf(
+                Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VIDEO,
+                Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+            )
+            Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.M -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            else -> emptyArray()
+        }
+        permissionLauncher.launch(permissions)
+    }
+
     fun requestDocumentsAccess() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             try {
@@ -331,19 +345,6 @@ private fun GalleryApp() {
             requestPermissions()
             hasDocumentAccess = context.hasDocumentAccess()
         }
-    }
-    fun requestPermissions() {
-        val permissions = when {
-            Build.VERSION.SDK_INT >= 34 -> arrayOf(
-                Manifest.permission.READ_MEDIA_IMAGES,
-                Manifest.permission.READ_MEDIA_VIDEO,
-                Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
-            )
-            Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.M -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE)
-            else -> emptyArray()
-        }
-        permissionLauncher.launch(permissions)
     }
     fun refresh() {
         if (isRefreshing) return
