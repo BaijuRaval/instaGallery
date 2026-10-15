@@ -27,6 +27,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.consume
+import androidx.compose.ui.geometry.getDistance
+import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
@@ -278,17 +284,36 @@ private fun GalleryApp() {
                     Column(Modifier.weight(1f)) {
                         Text(when {
                             transferMode != null -> "Choose destination"
+                            tab == "Folders" && selectedAlbum != "All media" -> selectedAlbum
                             selected.isNotEmpty() -> "${selected.size} selected"
                             else -> "instaGallery"
-                        }, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                        Text(if (transferMode != null) "${transferMode} to a folder" else "${visible.size} items", color = Color.LightGray, fontSize = 12.sp)
+                        }, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(when {
+                            transferMode != null -> "${transferMode} to a folder"
+                            selected.isNotEmpty() -> "${selected.size} selected • ${visible.size} items"
+                            else -> "${visible.size} items"
+                        }, color = Color.LightGray, fontSize = 12.sp)
                     }
                     Box {
-                        IconButton(onClick = { if (selected.isNotEmpty()) actionMenu = true else settingsOpen = true }) {
-                            Icon(if (selected.isNotEmpty()) Icons.Default.MoreVert else Icons.Default.Settings,
-                                if (selected.isNotEmpty()) "Selection options" else "Settings", tint = Color.White)
+                        IconButton(onClick = {
+                            if (selected.isNotEmpty()) shareMedia(media.filter { it.uri in selected })
+                            else statusMessage = "Long-press a photo or video to select it, then tap Share."
+                        }) {
+                            Icon(Icons.Default.Share, "Share selected media", tint = Color.White)
                         }
-                        DropdownMenu(expanded = actionMenu && selected.isNotEmpty(), onDismissRequest = { actionMenu = false }) {
+                        IconButton(onClick = { actionMenu = true }) {
+                            Icon(Icons.Default.MoreVert, "More options", tint = Color.White)
+                        }
+                        DropdownMenu(expanded = actionMenu, onDismissRequest = { actionMenu = false }) {
+                            if (tab == "Reel" || selectedAlbum != "All media") {
+                                DropdownMenuItem(text = { Text(if (visible.isNotEmpty() && selected.size == visible.size) "Deselect all" else "Select all") },
+                                    leadingIcon = { Icon(Icons.Default.Collections, null) },
+                                    onClick = {
+                                        selected = if (visible.isNotEmpty() && selected.size == visible.size) emptySet() else visible.map { it.uri }.toSet()
+                                        actionMenu = false
+                                    })
+                            }
+                            if (selected.isNotEmpty()) {
                             DropdownMenuItem(text = { Text("Share") }, leadingIcon = { Icon(Icons.Default.Share, null) }, onClick = { actionMenu = false; shareMedia(media.filter { it.uri in selected }) })
                             DropdownMenuItem(text = { Text("Details") }, leadingIcon = { Icon(Icons.Default.Info, null) }, onClick = { actionMenu = false; media.firstOrNull { it.uri in selected }?.let { infoItem = it } })
                             DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Default.Edit, null) }, onClick = { actionMenu = false; media.firstOrNull { it.uri in selected }?.let { renameItem = it; renameText = it.name } })
@@ -302,7 +327,7 @@ private fun GalleryApp() {
                                 }
                             })
                             DropdownMenuItem(text = { Text("Delete") }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = Color(0xFFFF6680)) }, onClick = { actionMenu = false; deleteMedia(media.filter { it.uri in selected }) })
-                            DropdownMenuItem(text = { Text("Cancel selection") }, onClick = { actionMenu = false; selected = emptySet() })
+                            }
                         }
                     }
                 }
@@ -330,15 +355,93 @@ private fun GalleryApp() {
                             }
                         }
                     }
-                    else -> LazyVerticalGrid(columns = GridCells.Fixed(3), modifier = Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(2.dp), horizontalArrangement = Arrangement.spacedBy(2.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        items(visible, key = { it.uri.toString() }) { item ->
-                            val isSelected = item.uri in selected
-                            MediaThumbnail(item, isSelected, thumbnailLoader,
-                                onClick = {
-                                    if (selected.isNotEmpty()) selected = if (isSelected) selected - item.uri else selected + item.uri
-                                    else viewerStartUri = item.uri
-                                },
-                                onLongClick = { selected = if (isSelected) selected - item.uri else selected + item.uri })
+                    else -> {
+                        val gridState = rememberLazyGridState()
+                        val latestSelection = rememberUpdatedState(selected)
+                        LazyVerticalGrid(
+                            state = gridState,
+                            columns = GridCells.Fixed(3),
+                            modifier = Modifier.weight(1f).fillMaxWidth().pointerInput(visible, gridState) {
+                                awaitEachGesture {
+                                    val down = awaitFirstDown(requireUnconsumed = false)
+                                    var currentPosition = down.position
+                                    var releasedEarly = false
+                                    var movedBeforeLongPress = false
+                                    val completedBeforeLongPress = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                                        while (true) {
+                                            val event = awaitPointerEvent()
+                                            val change = event.changes.firstOrNull { it.id == down.id }
+                                            if (change == null) {
+                                                releasedEarly = true
+                                                return@withTimeoutOrNull true
+                                            }
+                                            currentPosition = change.position
+                                            if (!change.pressed) {
+                                                releasedEarly = true
+                                                return@withTimeoutOrNull true
+                                            }
+                                            if ((change.position - down.position).getDistance() > viewConfiguration.touchSlop) {
+                                                movedBeforeLongPress = true
+                                                return@withTimeoutOrNull true
+                                            }
+                                        }
+                                        true
+                                    }
+                                    if (completedBeforeLongPress != null) {
+                                        if (releasedEarly && !movedBeforeLongPress) {
+                                            val info = gridState.layoutInfo.visibleItemsInfo.firstOrNull { itemInfo ->
+                                                currentPosition.x >= itemInfo.offset.x && currentPosition.x < itemInfo.offset.x + itemInfo.size.width &&
+                                                currentPosition.y >= itemInfo.offset.y && currentPosition.y < itemInfo.offset.y + itemInfo.size.height
+                                            }
+                                            val item = info?.let { visible.getOrNull(it.index) }
+                                            if (item != null) {
+                                                val current = latestSelection.value
+                                                if (current.isNotEmpty()) {
+                                                    selected = if (item.uri in current) current - item.uri else current + item.uri
+                                                } else {
+                                                    viewerStartUri = item.uri
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        val dragSelection = latestSelection.value.toMutableSet()
+                                        var lastSelectedUri: Uri? = null
+                                        fun selectAt(position: androidx.compose.ui.geometry.Offset) {
+                                            val info = gridState.layoutInfo.visibleItemsInfo.firstOrNull { itemInfo ->
+                                                position.x >= itemInfo.offset.x && position.x < itemInfo.offset.x + itemInfo.size.width &&
+                                                position.y >= itemInfo.offset.y && position.y < itemInfo.offset.y + itemInfo.size.height
+                                            }
+                                            val item = info?.let { visible.getOrNull(it.index) }
+                                            if (item != null && item.uri != lastSelectedUri) {
+                                                dragSelection.add(item.uri)
+                                                selected = dragSelection.toSet()
+                                                lastSelectedUri = item.uri
+                                            }
+                                        }
+                                        down.consume()
+                                        selectAt(down.position)
+                                        while (true) {
+                                            val event = awaitPointerEvent()
+                                            val change = event.changes.firstOrNull { it.id == down.id }
+                                            if (change == null) break
+                                            if (change.pressed) {
+                                                change.consume()
+                                                selectAt(change.position)
+                                            } else {
+                                                change.consume()
+                                                break
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            contentPadding = PaddingValues(2.dp),
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            items(visible, key = { it.uri.toString() }) { item ->
+                                MediaThumbnail(item, item.uri in selected, thumbnailLoader)
+                            }
                         }
                     }
                 }
@@ -581,11 +684,10 @@ private fun FolderTile(name: String, items: List<GalleryMedia>, imageLoader: Ima
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MediaThumbnail(item: GalleryMedia, selected: Boolean, imageLoader: ImageLoader, onClick: () -> Unit, onLongClick: () -> Unit) {
+private fun MediaThumbnail(item: GalleryMedia, selected: Boolean, imageLoader: ImageLoader) {
     val context = LocalContext.current
-    Box(Modifier.aspectRatio(0.78f).background(if (selected) Color(0xFF503040) else Color.DarkGray).combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
+    Box(Modifier.aspectRatio(0.78f).background(if (selected) Color(0xFF503040) else Color.DarkGray)) {
         AsyncImage(model = ImageRequest.Builder(context).data(item.uri).apply { if (item.isVideo) videoFrameMillis(0) }.crossfade(true).build(),
             imageLoader = imageLoader, contentDescription = item.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         if (item.isVideo) Icon(Icons.Default.PlayArrow, "Video", tint = Color.White, modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(24.dp))
