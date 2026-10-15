@@ -55,7 +55,6 @@ import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Close
@@ -72,6 +71,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
@@ -133,6 +133,22 @@ private data class GalleryMedia(
         else if (durationMs > 10_000L) 10_000L else (durationMs - 500L).coerceAtLeast(0L)
 }
 private data class CopyResult(val success: Boolean, val error: String? = null)
+
+@Composable
+private fun BottomAction(
+    label: String,
+    icon: ImageVector,
+    modifier: Modifier = Modifier,
+    tint: Color = Color.White,
+    onClick: () -> Unit
+) {
+    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        IconButton(onClick = onClick, modifier = Modifier.size(38.dp)) {
+            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(21.dp))
+        }
+        Text(label, color = Color.White, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Clip)
+    }
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -556,84 +572,46 @@ private fun GalleryApp() {
             )
         } else {
             Column(Modifier.fillMaxSize().background(Color(0xFF101010)).statusBarsPadding()) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Collections, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(28.dp))
-                    Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(when {
-                            transferMode != null -> "Choose destination"
-                            selectedFolder != null -> selectedFolder!!
-                            tab == "Folders" && selectedAlbum != "All media" -> selectedAlbum
-                            selected.isNotEmpty() -> "${selected.size} selected"
-                            else -> "instaGallery"
-                        }, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(when {
-                            transferMode != null -> "${transferMode} to a folder"
-                            selectedFolder != null -> "Folder selected • ${media.count { it.album == selectedFolder }} items"
-                            selected.isNotEmpty() -> "${selected.size} selected • ${visible.size} items"
-                            else -> "${visible.size} items"
-                        }, color = Color.LightGray, fontSize = 12.sp)
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                        if (selected.isNotEmpty() || selectedFolder != null) {
-                            Box {
-                                IconButton(onClick = { actionMenu = true }) {
-                                    Icon(Icons.Default.MoreVert, "Selection actions", tint = Color.White)
-                                }
-                                DropdownMenu(expanded = actionMenu, onDismissRequest = { actionMenu = false }) {
-                                    if (selectedFolder != null) {
-                                        val folderName = selectedFolder!!
-                                        DropdownMenuItem(text = { Text("Details") }, leadingIcon = { Icon(Icons.Default.Info, null) },
-                                            onClick = { actionMenu = false; folderDetailsName = folderName })
-                                        DropdownMenuItem(text = { Text("Rename folder") }, leadingIcon = { Icon(Icons.Default.Edit, null) },
-                                            onClick = { actionMenu = false; folderRenameTarget = folderName; folderRenameText = folderName })
-                                        DropdownMenuItem(text = { Text(if (folderName in hiddenFolders) "Unhide folder" else "Hide folder") },
-                                            leadingIcon = { Icon(if (folderName in hiddenFolders) Icons.Default.Visibility else Icons.Default.VisibilityOff, null) },
-                                            onClick = { setFolderHidden(folderName, folderName !in hiddenFolders) })
-                                        DropdownMenuItem(text = { Text("Delete folder") }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = Color(0xFFFF6680)) },
-                                            onClick = {
-                                                actionMenu = false
-                                                folderRemoveTarget = folderName
-                                            })
-                                    } else {
-                                        if (tab == "Reel" || selectedAlbum != "All media") {
-                                            DropdownMenuItem(
-                                                text = { Text(if (visible.isNotEmpty() && selected.size == visible.size) "Deselect all" else "Select all") },
-                                                leadingIcon = { Icon(Icons.Default.Collections, null) },
-                                                onClick = {
-                                                    selected = if (visible.isNotEmpty() && selected.size == visible.size) emptySet() else visible.map { it.uri }.toSet()
-                                                    actionMenu = false
-                                                })
-                                        }
-                                        DropdownMenuItem(text = { Text("Share") }, leadingIcon = { Icon(Icons.Default.Share, null) }, onClick = {
-                                            actionMenu = false
-                                            shareMedia(media.filter { it.uri in selected })
-                                        })
-                                        DropdownMenuItem(text = { Text("Details") }, leadingIcon = { Icon(Icons.Default.Info, null) }, onClick = {
-                                            actionMenu = false
-                                            media.firstOrNull { it.uri in selected }?.let { infoItem = it }
-                                        })
-                                        DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Default.Edit, null) }, onClick = {
-                                            actionMenu = false
-                                            media.firstOrNull { it.uri in selected }?.let { renameItem = it; renameText = it.name }
-                                        })
-                                        DropdownMenuItem(text = { Text("Copy") }, leadingIcon = { Icon(Icons.Default.ContentCopy, null) }, onClick = { beginTransfer("Copy") })
-                                        DropdownMenuItem(text = { Text("Move") }, leadingIcon = { Icon(Icons.Default.DriveFileMove, null) }, onClick = {
-                                            actionMenu = false
-                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !MediaStore.canManageMedia(context)) {
-                                                manageMediaInfoOpen = true
-                                            } else {
-                                                beginTransfer("Move")
-                                            }
-                                        })
-                                        DropdownMenuItem(text = { Text("Delete") }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = Color(0xFFFF6680)) }, onClick = {
-                                            actionMenu = false
-                                            deleteMedia(media.filter { it.uri in selected })
-                                        })
-                                    }
-                                }
+                if (selected.isNotEmpty()) {
+                    val allVisibleSelected = visible.isNotEmpty() && visible.all { it.uri in selected }
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { selected = emptySet() }) {
+                            Icon(Icons.Default.Close, "Exit selection", tint = Color.White)
+                        }
+                        TextButton(
+                            onClick = { selected = if (allVisibleSelected) emptySet() else visible.map { it.uri }.toSet() },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("${selected.size}/${visible.size}", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                Text(if (allVisibleSelected) "Deselect all" else "Select all", fontSize = 12.sp, color = Color.LightGray)
                             }
-                        } else if (tab == "Folders") {
+                        }
+                    }
+                } else if (selectedFolder != null) {
+                    val folderName = selectedFolder!!
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { selectedFolder = null }) {
+                            Icon(Icons.Default.Close, "Clear folder selection", tint = Color.White)
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text(folderName, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("Folder selected • ${media.count { it.album == folderName }} items", color = Color.LightGray, fontSize = 12.sp)
+                        }
+                    }
+                } else {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Collections, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(28.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(when {
+                                transferMode != null -> "Choose destination"
+                                tab == "Folders" && selectedAlbum != "All media" -> selectedAlbum
+                                else -> "instaGallery"
+                            }, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(if (transferMode != null) "${transferMode} to a folder" else "${visible.size} items", color = Color.LightGray, fontSize = 12.sp)
+                        }
+                        if (tab == "Folders" && transferMode == null) {
                             IconButton(onClick = { settingsPage = "main" }) {
                                 Icon(Icons.Default.Settings, "Settings", tint = Color.White)
                             }
@@ -775,9 +753,30 @@ private fun GalleryApp() {
                         }
                     }
                 }
-                Row(Modifier.fillMaxWidth().navigationBarsPadding().background(Color(0xFF171717)).padding(vertical = 5.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    NavigationBarItem(selected = tab == "Folders", onClick = { tab = "Folders"; selectedAlbum = "All media"; selectedFolder = null; selected = emptySet() }, icon = { Icon(Icons.Default.Folder, null) }, label = { Text("Folders") })
-                    NavigationBarItem(selected = tab == "Reel", onClick = { tab = "Reel"; selectedAlbum = "All media"; selectedFolder = null; selected = emptySet() }, icon = { Icon(Icons.Default.PlayArrow, null) }, label = { Text("Reel") })
+                if (selected.isNotEmpty()) {
+                    Row(Modifier.fillMaxWidth().navigationBarsPadding().background(Color(0xFF171717)).padding(horizontal = 2.dp, vertical = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                        BottomAction("Details", Icons.Default.Info, Modifier.weight(1f)) { media.firstOrNull { it.uri in selected }?.let { infoItem = it } }
+                        BottomAction("Rename", Icons.Default.Edit, Modifier.weight(1f)) { media.firstOrNull { it.uri in selected }?.let { renameItem = it; renameText = it.name } }
+                        BottomAction("Copy", Icons.Default.ContentCopy, Modifier.weight(1f)) { beginTransfer("Copy") }
+                        BottomAction("Move", Icons.Default.DriveFileMove, Modifier.weight(1f)) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !MediaStore.canManageMedia(context)) manageMediaInfoOpen = true else beginTransfer("Move")
+                        }
+                        BottomAction("Delete", Icons.Default.Delete, Modifier.weight(1f), tint = Color(0xFFFF6680)) { deleteMedia(media.filter { it.uri in selected }) }
+                        BottomAction("Share", Icons.Default.Share, Modifier.weight(1f)) { shareMedia(media.filter { it.uri in selected }) }
+                    }
+                } else if (selectedFolder != null) {
+                    val folderName = selectedFolder!!
+                    Row(Modifier.fillMaxWidth().navigationBarsPadding().background(Color(0xFF171717)).padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                        BottomAction("Details", Icons.Default.Info, Modifier.weight(1f)) { folderDetailsName = folderName }
+                        BottomAction("Rename", Icons.Default.Edit, Modifier.weight(1f)) { folderRenameTarget = folderName; folderRenameText = folderName }
+                        BottomAction(if (folderName in hiddenFolders) "Unhide" else "Hide", if (folderName in hiddenFolders) Icons.Default.Visibility else Icons.Default.VisibilityOff, Modifier.weight(1f)) { setFolderHidden(folderName, folderName !in hiddenFolders) }
+                        BottomAction("Delete", Icons.Default.Delete, Modifier.weight(1f), tint = Color(0xFFFF6680)) { folderRemoveTarget = folderName }
+                    }
+                } else {
+                    Row(Modifier.fillMaxWidth().navigationBarsPadding().background(Color(0xFF171717)).padding(vertical = 5.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                        NavigationBarItem(selected = tab == "Folders", onClick = { tab = "Folders"; selectedAlbum = "All media"; selectedFolder = null; selected = emptySet() }, icon = { Icon(Icons.Default.Folder, null) }, label = { Text("Folders") })
+                        NavigationBarItem(selected = tab == "Reel", onClick = { tab = "Reel"; selectedAlbum = "All media"; selectedFolder = null; selected = emptySet() }, icon = { Icon(Icons.Default.PlayArrow, null) }, label = { Text("Reel") })
+                    }
                 }
             }
             if (manageMediaInfoOpen) AlertDialog(
