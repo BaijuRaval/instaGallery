@@ -1455,6 +1455,15 @@ private fun ReelsViewer(
                                             )
                                         }
                                         pointers.forEach { it.consume() }
+                                    } else if (usedMultiTouch) {
+                                        val change = pointers.first()
+                                        if (change.position != change.previousPosition) {
+                                            if (zoom > 1.001f) {
+                                                pan += change.position - change.previousPosition
+                                            }
+                                            // Consume the last finger until the full pinch/twist gesture ends.
+                                            change.consume()
+                                        }
                                     } else if (zoom > 1.001f) {
                                         val change = pointers.first()
                                         if (change.position != change.previousPosition) {
@@ -1466,22 +1475,6 @@ private fun ReelsViewer(
                                 currentMediaZoomed = zoom > 1.001f
                             }
                         }
-                        .graphicsLayer(
-                            scaleX = zoom * rotationFit,
-                            scaleY = zoom * rotationFit,
-                            translationX = pan.x,
-                            translationY = pan.y,
-                            rotationZ = rotation,
-                            transformOrigin = androidx.compose.ui.graphics.TransformOrigin.Center
-                        ),
-                    contentScale = ContentScale.Fit
-                )
-            }
-        }
-    }
-}
-
-      }
                         .graphicsLayer(
                             scaleX = zoom * rotationFit,
                             scaleY = zoom * rotationFit,
