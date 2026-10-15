@@ -20,6 +20,8 @@ import android.media.MediaScannerConnection
 import java.io.File
 import java.io.FileOutputStream
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.activity.ComponentActivity
@@ -29,6 +31,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.IntentSenderRequest
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.rememberScrollState
@@ -95,6 +98,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import coil.ImageLoader
 import coil.compose.AsyncImage
+import coil.compose.rememberAsyncImagePainter
 import coil.memory.MemoryCache
 import coil.request.ImageRequest
 import kotlinx.coroutines.Dispatchers
@@ -159,6 +163,9 @@ private fun GalleryApp() {
     }
     var rememberLastPlayed by remember(context) {
         mutableStateOf(settingsPrefs.getBoolean("remember_last_played", false))
+    }
+    var mediaAutoFitToScreen by remember(context) {
+        mutableStateOf(settingsPrefs.getBoolean("media_auto_fit_to_screen", true))
     }
     var tab by remember { mutableStateOf("Reel") }
     var selected by remember { mutableStateOf(setOf<Uri>()) }
@@ -507,6 +514,11 @@ private fun GalleryApp() {
                 hiddenFolders = hiddenFolders,
                 autoPlayNext = autoPlayNext,
                 rememberLastPlayed = rememberLastPlayed,
+                mediaAutoFitToScreen = mediaAutoFitToScreen,
+                onToggleMediaAutoFitToScreen = { enabled ->
+                    mediaAutoFitToScreen = enabled
+                    settingsPrefs.edit().putBoolean("media_auto_fit_to_screen", enabled).apply()
+                },
                 onToggleAutoPlayNext = { enabled ->
                     autoPlayNext = enabled
                     settingsPrefs.edit().putBoolean("auto_play_next", enabled).apply()
@@ -529,6 +541,7 @@ private fun GalleryApp() {
                 imageLoader = thumbnailLoader,
                 autoPlayNext = autoPlayNext,
                 rememberLastPlayed = rememberLastPlayed,
+                mediaAutoFitToScreen = mediaAutoFitToScreen,
                 onPageViewed = { uri ->
                     viewerCurrentUri = uri
                     val savedUri = settingsPrefs.getString("last_media_uri", null)
@@ -877,6 +890,8 @@ private fun SettingsScreen(
     hiddenFolders: Set<String>,
     autoPlayNext: Boolean,
     rememberLastPlayed: Boolean,
+    mediaAutoFitToScreen: Boolean,
+    onToggleMediaAutoFitToScreen: (Boolean) -> Unit,
     onToggleAutoPlayNext: (Boolean) -> Unit,
     onToggleRememberLastPlayed: (Boolean) -> Unit,
     onBack: () -> Unit,
@@ -964,6 +979,12 @@ private fun SettingsScreen(
                     subtitle = "Reopen the last viewed item and resume video time",
                     checked = rememberLastPlayed,
                     onCheckedChange = onToggleRememberLastPlayed
+                )
+                PlaybackSettingRow(
+                    title = "Media auto fit to screen",
+                    subtitle = "Double-tap to fill the screen; double-tap again to restore original fit",
+                    checked = mediaAutoFitToScreen,
+                    onCheckedChange = onToggleMediaAutoFitToScreen
                 )
             }
         }
@@ -1345,6 +1366,7 @@ private fun ReelsViewer(
     imageLoader: ImageLoader,
     autoPlayNext: Boolean,
     rememberLastPlayed: Boolean,
+    mediaAutoFitToScreen: Boolean,
     onPageViewed: (Uri) -> Unit
 ) {
     val context = LocalContext.current
@@ -1394,6 +1416,7 @@ private fun ReelsViewer(
                     playing = playing,
                     autoPlayNext = autoPlayNext,
                     rememberLastPlayed = rememberLastPlayed,
+                    mediaAutoFitToScreen = mediaAutoFitToScreen,
                     onEnded = {
                         if (autoPlayNext && !currentMediaZoomed && !pagerState.isScrollInProgress) {
                             scope.launch {
@@ -1523,6 +1546,7 @@ private fun VideoPage(
     playing: Boolean,
     autoPlayNext: Boolean,
     rememberLastPlayed: Boolean,
+    mediaAutoFitToScreen: Boolean,
     onEnded: () -> Unit,
     onTogglePlay: () -> Unit,
     onZoomChanged: (Boolean) -> Unit
