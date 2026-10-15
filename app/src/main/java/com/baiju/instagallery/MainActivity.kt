@@ -1729,8 +1729,9 @@ private fun calculatePinchPan(
     if (newZoom <= 1.001f) return Offset.Zero
     val center = Offset(containerSize.width / 2f, containerSize.height / 2f)
     val scaleChange = newZoom / oldZoom.coerceAtLeast(0.001f)
-    // Keep the media point beneath the fingers stable as the pinch changes scale.
-    return newCentroid - center - (oldCentroid - center - currentPan) * scaleChange
+    // Transform around the midpoint between the fingers, keeping that image point anchored.
+    return currentPan + (newCentroid - oldCentroid) +
+        (oldCentroid - center - currentPan) * (1f - scaleChange)
 }
 
 private fun formatPlaybackTime(millis: Long): String {
