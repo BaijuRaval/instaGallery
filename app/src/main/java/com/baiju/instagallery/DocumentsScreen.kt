@@ -286,20 +286,42 @@ private fun DocumentTile(document: BrowserDocument, showPath: Boolean, onClick: 
         document.extension in setOf("ppt", "pptx", "odp") -> Color(0xFFFFA45B)
         else -> Color(0xFF7AB7FF)
     }
-    Surface(onClick = onClick, color = Color(0xFF191919), shape = MaterialTheme.shapes.large,
-        modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.fillMaxWidth().padding(14.dp)) {
-            Icon(icon, null, tint = tint, modifier = Modifier.size(34.dp))
-            Spacer(Modifier.height(12.dp))
-            Text(document.name, color = Color.White, fontWeight = FontWeight.SemiBold,
-                maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 14.sp)
+    // Match the Media folder tile proportions: a preview area, then name and metadata.
+    Column(
+        Modifier.fillMaxWidth()
+            .background(Color(0xFF191919), MaterialTheme.shapes.medium)
+            .combinedClickable(onClick = onClick, onLongClick = onClick)
+    ) {
+        Box(
+            Modifier.fillMaxWidth().aspectRatio(1.15f).background(Color(0xFF242424)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, null, tint = tint, modifier = Modifier.size(48.dp))
+        }
+        Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp)) {
+            Text(
+                document.name,
+                color = Color.White,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                fontSize = 14.sp
+            )
             Spacer(Modifier.height(4.dp))
-            Text(if (document.isDirectory) "Folder" else document.extension.uppercase().ifBlank { "FILE" },
-                color = Color.LightGray, fontSize = 11.sp)
+            Text(
+                if (document.isDirectory) "Folder" else document.extension.uppercase().ifBlank { "FILE" },
+                color = Color.LightGray,
+                fontSize = 11.sp
+            )
             if (showPath && document.relativePath.isNotBlank()) {
                 Spacer(Modifier.height(3.dp))
-                Text(document.relativePath, color = Color.Gray, fontSize = 10.sp,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    document.relativePath,
+                    color = Color.Gray,
+                    fontSize = 10.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }
