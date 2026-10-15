@@ -148,9 +148,6 @@ private fun GalleryApp() {
     var autoPlayNext by remember(context) {
         mutableStateOf(settingsPrefs.getBoolean("auto_play_next", true))
     }
-    var loopMedia by remember(context) {
-        mutableStateOf(settingsPrefs.getBoolean("loop_media", false))
-    }
     var rememberLastPlayed by remember(context) {
         mutableStateOf(settingsPrefs.getBoolean("remember_last_played", false))
     }
@@ -500,15 +497,10 @@ private fun GalleryApp() {
                 folderCounts = media.groupingBy { it.album }.eachCount(),
                 hiddenFolders = hiddenFolders,
                 autoPlayNext = autoPlayNext,
-                loopMedia = loopMedia,
                 rememberLastPlayed = rememberLastPlayed,
                 onToggleAutoPlayNext = { enabled ->
                     autoPlayNext = enabled
                     settingsPrefs.edit().putBoolean("auto_play_next", enabled).apply()
-                },
-                onToggleLoopMedia = { enabled ->
-                    loopMedia = enabled
-                    settingsPrefs.edit().putBoolean("loop_media", enabled).apply()
                 },
                 onToggleRememberLastPlayed = { enabled ->
                     rememberLastPlayed = enabled
@@ -876,10 +868,8 @@ private fun SettingsScreen(
     folderCounts: Map<String, Int>,
     hiddenFolders: Set<String>,
     autoPlayNext: Boolean,
-    loopMedia: Boolean,
     rememberLastPlayed: Boolean,
     onToggleAutoPlayNext: (Boolean) -> Unit,
-    onToggleLoopMedia: (Boolean) -> Unit,
     onToggleRememberLastPlayed: (Boolean) -> Unit,
     onBack: () -> Unit,
     onOpenHiddenFolders: () -> Unit,
@@ -952,16 +942,14 @@ private fun SettingsScreen(
                 }
                 Spacer(Modifier.height(18.dp))
                 PlaybackSettingRow(
-                    title = "Auto-play next media",
-                    subtitle = "Videos move to the next item; images stay for 5 seconds",
+                    title = "Auto-play next / Loop current",
+                    subtitle = if (autoPlayNext) {
+                        "On: play next video when it ends; images stay 5 seconds"
+                    } else {
+                        "Off: repeat the current video instead of moving to the next"
+                    },
                     checked = autoPlayNext,
                     onCheckedChange = onToggleAutoPlayNext
-                )
-                PlaybackSettingRow(
-                    title = "Loop current media",
-                    subtitle = "Repeat the current video or keep the current image open",
-                    checked = loopMedia,
-                    onCheckedChange = onToggleLoopMedia
                 )
                 PlaybackSettingRow(
                     title = "Remember last playback",
@@ -1348,14 +1336,10 @@ private fun ReelsViewer(
     startIndex: Int,
     imageLoader: ImageLoader,
     autoPlayNext: Boolean,
-    loopMedia: Boolean,
     rememberLastPlayed: Boolean,
     onPageViewed: (Uri) -> Unit
 ) {
     val context = LocalContext.current
-    val prefs = remember(context) {
-        context.getSharedPreferences("instagallery_settings", Context.MODE_PRIVATE)
-    }
     val pagerState = rememberPagerState(initialPage = startIndex, pageCount = { items.size })
     var playing by remember { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
@@ -1364,9 +1348,9 @@ private fun ReelsViewer(
         items.getOrNull(pagerState.currentPage)?.let { onPageViewed(it.uri) }
     }
 
-    LaunchedEffect(pagerState.currentPage, autoPlayNext, loopMedia) {
+    LaunchedEffect(pagerState.currentPage, autoPlayNext) {
         val item = items.getOrNull(pagerState.currentPage) ?: return@LaunchedEffect
-        if (!item.isVideo && autoPlayNext && !loopMedia) {
+        if (!item.isVideo && autoPlayNext) {
             val page = pagerState.currentPage
             delay(5_000)
             if (pagerState.currentPage == page && items.isNotEmpty()) {
@@ -1390,10 +1374,9 @@ private fun ReelsViewer(
                     active = page == pagerState.currentPage,
                     playing = playing,
                     autoPlayNext = autoPlayNext,
-                    loopMedia = loopMedia,
                     rememberLastPlayed = rememberLastPlayed,
                     onEnded = {
-                        if (autoPlayNext && !loopMedia) {
+                        if (autoPlayNext) {
                             scope.launch {
                                 val current = pagerState.currentPage
                                 pagerState.animateScrollToPage(if (current < items.lastIndex) current + 1 else 0)
@@ -1403,24 +1386,51 @@ private fun ReelsViewer(
                     onTogglePlay = { playing = !playing }
                 )
             } else {
-                var zoom by remember(item.uri) { mutableStateOf(1f) }
+                var zoom by remember(item.uri) { mutableFloatStateOf(1f) }
                 var pan by remember(item.uri) { mutableStateOf(Offset.Zero) }
-                val transformState = rememberTransformableState { zoomChange, panChange, _ ->
-                    zoom = (zoom * zoomChange).coerceIn(1f, 5f)
-                    pan = if (zoom <= 1f) Offset.Zero else pan + panChange
-                }
                 AsyncImage(
                     model = ImageRequest.Builder(context).data(item.uri).crossfade(false).build(),
                     imageLoader = imageLoader,
                     contentDescription = item.name,
                     modifier = Modifier.fillMaxSize()
+                        .pointerInput(item.uri) {
+                            awaitEachGesture {
+                                awaitFirstDown(requireUnconsumed = false)
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    val pointers = event.changes.filter { it.pressed }
+                                    if (pointers.isEmpty()) break
+                                    if (pointers.size >= 2) {
+                                        val first = pointers[0]
+                                        val second = pointers[1]
+                                        val previousDistance = (first.previousPosition - second.previousPosition).getDistance()
+                                        val currentDistance = (first.position - second.position).getDistance()
+                                        if (previousDistance > 0.5f) {
+                                            val oldZoom = zoom
+                                            val newZoom = (oldZoom * (currentDistance / previousDistance)).coerceIn(1f, 5f)
+                                            val oldCenter = (first.previousPosition + second.previousPosition) / 2f
+                                            val newCenter = (first.position + second.position) / 2f
+                                            zoom = newZoom
+                                            pan = if (newZoom <= 1.001f) Offset.Zero
+                                                else (newCenter - (newCenter - pan) * (newZoom / oldZoom.coerceAtLeast(0.001f)))
+                                        }
+                                        pointers.forEach { it.consume() }
+                                    } else if (zoom > 1.001f) {
+                                        val change = pointers.first()
+                                        if (change.position != change.previousPosition) {
+                                            pan += change.position - change.previousPosition
+                                            change.consume()
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         .graphicsLayer(
                             scaleX = zoom,
                             scaleY = zoom,
                             translationX = pan.x,
                             translationY = pan.y
-                        )
-                        .transformable(state = transformState, canPan = { zoom > 1f }),
+                        ),
                     contentScale = ContentScale.Fit
                 )
             }
@@ -1435,7 +1445,6 @@ private fun VideoPage(
     active: Boolean,
     playing: Boolean,
     autoPlayNext: Boolean,
-    loopMedia: Boolean,
     rememberLastPlayed: Boolean,
     onEnded: () -> Unit,
     onTogglePlay: () -> Unit
@@ -1452,23 +1461,19 @@ private fun VideoPage(
     val player = remember(item.uri, initialPositionMs) {
         ExoPlayer.Builder(context).build().apply {
             setMediaItem(MediaItem.fromUri(item.uri))
-            if (initialPositionMs > 0L) seekTo(initialPositionMs)
-            repeatMode = if (loopMedia) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
-            volume = 1f
             prepare()
+            if (initialPositionMs > 0L) seekTo(initialPositionMs)
+            repeatMode = if (autoPlayNext) Player.REPEAT_MODE_OFF else Player.REPEAT_MODE_ONE
+            volume = 1f
         }
     }
     val exoPlayer = player
-    var zoom by remember(item.uri) { mutableStateOf(1f) }
+    var zoom by remember(item.uri) { mutableFloatStateOf(1f) }
     var pan by remember(item.uri) { mutableStateOf(Offset.Zero) }
     var seekBarVisible by remember(item.uri) { mutableStateOf(false) }
     var fastForwarding by remember(item.uri) { mutableStateOf(false) }
-    var currentPositionMs by remember(item.uri) { mutableStateOf(initialPositionMs) }
-    var durationMs by remember(item.uri) { mutableStateOf(item.durationMs.coerceAtLeast(0L)) }
-    val transformState = rememberTransformableState { zoomChange, panChange, _ ->
-        zoom = (zoom * zoomChange).coerceIn(1f, 5f)
-        pan = if (zoom <= 1f) Offset.Zero else pan + panChange
-    }
+    var currentPositionMs by remember(item.uri) { mutableLongStateOf(initialPositionMs) }
+    var durationMs by remember(item.uri) { mutableLongStateOf(item.durationMs.coerceAtLeast(0L)) }
 
     DisposableEffect(player, lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -1477,6 +1482,12 @@ private fun VideoPage(
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
+            if (rememberLastPlayed) {
+                prefs.edit()
+                    .putString("last_media_uri", item.uri.toString())
+                    .putLong("last_playback_position", player.currentPosition.coerceAtLeast(0L))
+                    .apply()
+            }
             lifecycleOwner.lifecycle.removeObserver(observer)
             player.release()
         }
@@ -1487,8 +1498,8 @@ private fun VideoPage(
         player.playWhenReady = active && playing
     }
 
-    LaunchedEffect(loopMedia, player) {
-        player.repeatMode = if (loopMedia) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+    LaunchedEffect(autoPlayNext, player) {
+        player.repeatMode = if (autoPlayNext) Player.REPEAT_MODE_OFF else Player.REPEAT_MODE_ONE
     }
 
     LaunchedEffect(player, active, rememberLastPlayed) {
@@ -1502,14 +1513,14 @@ private fun VideoPage(
                     .putLong("last_playback_position", currentPositionMs)
                     .apply()
             }
-            delay(1_000)
+            delay(250)
         }
     }
 
-    DisposableEffect(player, active, autoPlayNext, loopMedia) {
+    DisposableEffect(player, active, autoPlayNext) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_ENDED && active && autoPlayNext && !loopMedia) onEnded()
+                if (playbackState == Player.STATE_ENDED && active && autoPlayNext) onEnded()
             }
         }
         player.addListener(listener)
@@ -1517,103 +1528,134 @@ private fun VideoPage(
     }
 
     Box(
-        Modifier.fillMaxSize().background(Color.Black).pointerInput(item.uri, active, player) {
-            awaitEachGesture {
-                val down = awaitFirstDown(requireUnconsumed = false)
-                if (!active) return@awaitEachGesture
+        Modifier.fillMaxSize().background(Color.Black)
+            .pointerInput(item.uri, active, player) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    if (!active) return@awaitEachGesture
 
-                val downPosition = down.position
-                val pointerId = down.id
-                var didMove = false
-                var horizontalSeeking = false
-                var multiTouch = false
-                var holdTriggered = false
-                var finished = false
+                    val downPosition = down.position
+                    var didMove = false
+                    var horizontalSeeking = false
+                    var multiTouch = false
+                    var longPressTriggered = false
+                    var finished = false
+                    var seekStartPosition = player.currentPosition.coerceAtLeast(0L)
 
-                while (!finished) {
-                    val event = if (!didMove && !holdTriggered && !multiTouch) {
-                        withTimeoutOrNull(500L) { awaitPointerEvent() }
-                    } else {
-                        awaitPointerEvent()
-                    }
+                    while (!finished) {
+                        val event = if (!didMove && !longPressTriggered && !multiTouch) {
+                            withTimeoutOrNull(450L) { awaitPointerEvent() }
+                        } else {
+                            awaitPointerEvent()
+                        }
 
-                    if (event == null) {
-                        holdTriggered = true
-                        fastForwarding = true
-                        player.setPlaybackSpeed(2.0f)
-                        continue
-                    }
+                        if (event == null) {
+                            longPressTriggered = true
+                            fastForwarding = true
+                            player.setPlaybackSpeed(2f)
+                            continue
+                        }
 
-                    if (event.changes.count { it.pressed } > 1) {
-                        multiTouch = true
-                        seekBarVisible = false
-                    }
+                        val pointers = event.changes.filter { it.pressed }
+                        if (pointers.isEmpty()) {
+                            finished = true
+                            continue
+                        }
 
-                    val change = event.changes.firstOrNull { it.id == pointerId }
-                    if (change == null || !change.pressed) {
-                        finished = true
-                        if (!multiTouch && !didMove && !holdTriggered) onTogglePlay()
-                        continue
-                    }
+                        if (pointers.size >= 2) {
+                            multiTouch = true
+                            if (longPressTriggered) {
+                                player.setPlaybackSpeed(1f)
+                                fastForwarding = false
+                            }
+                            val first = pointers[0]
+                            val second = pointers[1]
+                            val previousDistance = (first.previousPosition - second.previousPosition).getDistance()
+                            val currentDistance = (first.position - second.position).getDistance()
+                            if (previousDistance > 0.5f) {
+                                val oldZoom = zoom
+                                val newZoom = (oldZoom * (currentDistance / previousDistance)).coerceIn(1f, 5f)
+                                val oldCenter = (first.previousPosition + second.previousPosition) / 2f
+                                val newCenter = (first.position + second.position) / 2f
+                                zoom = newZoom
+                                pan = if (newZoom <= 1.001f) Offset.Zero
+                                    else (newCenter - (newCenter - pan) * (newZoom / oldZoom.coerceAtLeast(0.001f)))
+                            }
+                            pointers.forEach { it.consume() }
+                            seekBarVisible = false
+                            continue
+                        }
 
-                    if (multiTouch) continue
+                        if (multiTouch) {
+                            val change = pointers.first()
+                            if (zoom > 1.001f && change.position != change.previousPosition) {
+                                pan += change.position - change.previousPosition
+                                change.consume()
+                            }
+                            continue
+                        }
 
-                    val dx = change.position.x - downPosition.x
-                    val dy = change.position.y - downPosition.y
-                    if (!didMove && maxOf(kotlin.math.abs(dx), kotlin.math.abs(dy)) > viewConfiguration.touchSlop) {
-                        didMove = true
-                        if (kotlin.math.abs(dx) > kotlin.math.abs(dy)) {
-                            horizontalSeeking = true
+                        val change = pointers.first()
+                        val dx = change.position.x - downPosition.x
+                        val dy = change.position.y - downPosition.y
+
+                        if (!didMove && maxOf(kotlin.math.abs(dx), kotlin.math.abs(dy)) > viewConfiguration.touchSlop) {
+                            didMove = true
+                            horizontalSeeking = kotlin.math.abs(dx) > kotlin.math.abs(dy)
+                            if (horizontalSeeking) {
+                                seekStartPosition = player.currentPosition.coerceAtLeast(0L)
+                                seekBarVisible = true
+                                if (longPressTriggered) {
+                                    player.setPlaybackSpeed(1f)
+                                    fastForwarding = false
+                                }
+                            }
+                        }
+
+                        if (horizontalSeeking) {
+                            val duration = player.duration.takeIf {
+                                it > 0L && it != androidx.media3.common.C.TIME_UNSET
+                            } ?: item.durationMs
+                            if (duration > 0L && size.width > 0) {
+                                val deltaMs = ((dx / size.width.toFloat()) * duration.toFloat()).toLong()
+                                currentPositionMs = (seekStartPosition + deltaMs).coerceIn(0L, duration)
+                                player.seekTo(currentPositionMs)
+                            }
                             seekBarVisible = true
+                            change.consume()
                         }
                     }
 
-                    if (horizontalSeeking) {
-                        val duration = player.duration.takeIf {
-                            it > 0L && it != androidx.media3.common.C.TIME_UNSET
-                        } ?: item.durationMs
-                        if (duration > 0L && size.width > 0) {
-                            val fraction = (change.position.x / size.width.toFloat()).coerceIn(0f, 1f)
-                            currentPositionMs = (duration * fraction).toLong()
-                            player.seekTo(currentPositionMs)
-                        }
-                        change.consume()
+                    if (longPressTriggered && !horizontalSeeking) {
+                        player.setPlaybackSpeed(1f)
+                        fastForwarding = false
                     }
+                    seekBarVisible = false
+                    if (!didMove && !multiTouch && !longPressTriggered) onTogglePlay()
                 }
-
-                if (holdTriggered) {
-                    player.setPlaybackSpeed(1.0f)
-                    fastForwarding = false
-                }
-                // The scrub bar disappears the moment the user's finger leaves the screen.
-                seekBarVisible = false
-            }
-        },
+            },
         contentAlignment = Alignment.Center
     ) {
-        Box(
-            Modifier.fillMaxSize()
-                .graphicsLayer(
-                    scaleX = zoom,
-                    scaleY = zoom,
-                    translationX = pan.x,
-                    translationY = pan.y
-                )
-                .transformable(state = transformState, canPan = { zoom > 1f }),
-            contentAlignment = Alignment.Center
-        ) {
-            AndroidView(
-                factory = { ctx ->
-                    PlayerView(ctx).apply {
-                        useController = false
-                        this.player = exoPlayer
-                        setShutterBackgroundColor(android.graphics.Color.BLACK)
-                    }
-                },
-                update = { it.player = exoPlayer },
-                modifier = Modifier.fillMaxSize()
+        AndroidView(
+            factory = { ctx ->
+                PlayerView(ctx).apply {
+                    useController = false
+                    this.player = exoPlayer
+                    setShutterBackgroundColor(android.graphics.Color.BLACK)
+                    setOnTouchListener { _, _ -> true }
+                }
+            },
+            update = {
+                it.player = exoPlayer
+                it.setOnTouchListener { _, _ -> true }
+            },
+            modifier = Modifier.fillMaxSize().graphicsLayer(
+                scaleX = zoom,
+                scaleY = zoom,
+                translationX = pan.x,
+                translationY = pan.y
             )
-        }
+        )
 
         if (fastForwarding) {
             Surface(
@@ -1639,18 +1681,17 @@ private fun VideoPage(
                     .background(Color(0xAA000000))
                     .padding(horizontal = 18.dp, vertical = 14.dp)
             ) {
-                Slider(
-                    value = (currentPositionMs.toFloat() / safeDuration.toFloat()).coerceIn(0f, 1f),
-                    onValueChange = { fraction ->
-                        currentPositionMs = (safeDuration * fraction).toLong()
-                        player.seekTo(currentPositionMs)
-                    },
-                    colors = SliderDefaults.colors(
-                        thumbColor = Color(0xFFFF4D7D),
-                        activeTrackColor = Color(0xFFFF4D7D),
-                        inactiveTrackColor = Color.LightGray
+                Box(
+                    Modifier.fillMaxWidth().height(4.dp)
+                        .background(Color.LightGray.copy(alpha = 0.55f))
+                ) {
+                    Box(
+                        Modifier.fillMaxWidth(
+                            (currentPositionMs.toFloat() / safeDuration.toFloat()).coerceIn(0f, 1f)
+                        ).fillMaxHeight().background(Color(0xFFFF4D7D))
                     )
-                )
+                }
+                Spacer(Modifier.height(8.dp))
                 Text(
                     "${formatPlaybackTime(currentPositionMs)} / ${formatPlaybackTime(safeDuration)}",
                     color = Color.White,
