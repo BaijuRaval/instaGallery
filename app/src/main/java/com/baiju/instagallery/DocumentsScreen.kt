@@ -24,8 +24,6 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.gestures.transformable
-import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Description
@@ -494,10 +492,6 @@ private fun PdfPageContent(
     var bitmap by remember(uri, pageIndex) { mutableStateOf<Bitmap?>(null) }
     var error by remember(uri, pageIndex) { mutableStateOf<String?>(null) }
     var loading by remember(uri, pageIndex) { mutableStateOf(true) }
-    val transformState = rememberTransformableState { zoomChange, _, _ ->
-        onZoomChange(zoom * zoomChange)
-    }
-
     LaunchedEffect(uri, pageIndex) {
         loading = true
         val result = withContext(Dispatchers.IO) {
@@ -530,7 +524,6 @@ private fun PdfPageContent(
 
     BoxWithConstraints(
         Modifier.fillMaxWidth().padding(horizontal = 0.dp, vertical = 1.dp)
-            .transformable(state = transformState)
     ) {
         val pageWidth = maxWidth * zoom
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
