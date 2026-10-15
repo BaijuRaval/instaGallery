@@ -30,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.Slideshow
@@ -78,7 +79,8 @@ internal fun DocumentsScreen(
     onRequestAccess: () -> Unit,
     onBack: () -> Unit,
     initialViewMode: String = "all",
-    onDocumentOpenChanged: (Boolean) -> Unit = {}
+    onDocumentOpenChanged: (Boolean) -> Unit = {},
+    onOpenMenu: () -> Unit = {}
 ) {
     val context = LocalContext.current
     var documents by remember { mutableStateOf(emptyList<BrowserDocument>()) }
@@ -122,17 +124,32 @@ internal fun DocumentsScreen(
     }
 
     Column(Modifier.fillMaxSize().background(Color(0xFF101010)).statusBarsPadding().navigationBarsPadding()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = {
-                if (currentFolder.isNotBlank()) currentFolder = currentFolder.substringBeforeLast('/', "")
-                else onBack()
-            }) { Icon(Icons.Default.ArrowBack, "Back", tint = Color.White) }
+        // Keep the same gallery header hierarchy as Media: menu button, title, item count.
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onOpenMenu) {
+                Icon(Icons.Default.Menu, "Open menu", tint = Color.White, modifier = Modifier.size(27.dp))
+            }
+            Spacer(Modifier.width(4.dp))
             Column(Modifier.weight(1f)) {
-                Text(if (currentFolder.isBlank()) "Documents" else currentFolder.substringAfterLast('/'),
+                Text(
+                    when {
+                        currentFolder.isNotBlank() -> currentFolder.substringAfterLast('/')
+                        viewMode == "folders" -> "Folder"
+                        else -> "Doc"
+                    },
                     color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(if (!hasAccess) "Automatic document scan" else documents.count { !it.isDirectory }.toString() + " documents",
-                    color = Color.LightGray, fontSize = 12.sp)
+                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    when {
+                        !hasAccess -> "Automatic document scan"
+                        viewMode == "folders" && currentFolder.isNotBlank() ->
+                            "${documents.count { !it.isDirectory && it.relativePath == currentFolder }} documents in folder"
+                        viewMode == "folders" -> "${documents.count { it.isDirectory && it.relativePath.substringBeforeLast('/', "") == currentFolder }} folders"
+                        else -> "${documents.count { !it.isDirectory }} documents"
+                    },
+                    color = Color.LightGray, fontSize = 12.sp
+                )
             }
         }
 
@@ -152,15 +169,6 @@ internal fun DocumentsScreen(
                 }
             }
         } else {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                FilterChip(selected = viewMode == "all", onClick = { viewMode = "all"; currentFolder = "" },
-                    label = { Text("All Documents") })
-                FilterChip(selected = viewMode == "folders", onClick = { viewMode = "folders" },
-                    label = { Text("Folders") })
-                Spacer(Modifier.weight(1f))
-                TextButton(onClick = { scanRevision++ }) { Text("Rescan") }
-            }
             when {
                 loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = Color(0xFFFF4D7D))
