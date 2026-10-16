@@ -72,6 +72,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -543,19 +544,97 @@ internal fun DocumentsScreen(
                                 }
                             } else {
                                 LazyVerticalGrid(
-                                    state = mediaGridState, columns = GridCells.Fixed(activeColumns), modifier = gridModifier,
+                                    state = mediaGridState,
+                                    columns = GridCells.Fixed(activeColumns),
+                                    modifier = gridModifier.pointerInput(allFiles, mediaGridState, selectedUris) {
+                                        awaitEachGesture {
+                                            val down = awaitFirstDown(requireUnconsumed = false)
+                                            var currentPosition = down.position
+                                            var releasedEarly = false
+                                            var movedBeforeLongPress = false
+                                            var multiTouchDetected = false
+                                            val completedBeforeLongPress = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                                                while (true) {
+                                                    val event = awaitPointerEvent()
+                                                    if (event.changes.count { it.pressed } >= 2) {
+                                                        multiTouchDetected = true
+                                                        return@withTimeoutOrNull true
+                                                    }
+                                                    val change = event.changes.firstOrNull { it.id == down.id }
+                                                    if (change == null) {
+                                                        releasedEarly = true
+                                                        return@withTimeoutOrNull true
+                                                    }
+                                                    currentPosition = change.position
+                                                    if (!change.pressed) {
+                                                        releasedEarly = true
+                                                        return@withTimeoutOrNull true
+                                                    }
+                                                    if ((change.position - down.position).getDistance() > viewConfiguration.touchSlop) {
+                                                        movedBeforeLongPress = true
+                                                        return@withTimeoutOrNull true
+                                                    }
+                                                }
+                                                true
+                                            }
+                                            fun documentAt(position: androidx.compose.ui.geometry.Offset): BrowserDocument? {
+                                                val info = mediaGridState.layoutInfo.visibleItemsInfo.firstOrNull {
+                                                    position.x >= it.offset.x && position.x < it.offset.x + it.size.width &&
+                                                        position.y >= it.offset.y && position.y < it.offset.y + it.size.height
+                                                }
+                                                return info?.let { allFiles.getOrNull(it.index) }
+                                            }
+                                            if (completedBeforeLongPress != null) {
+                                                if (!multiTouchDetected && releasedEarly && !movedBeforeLongPress) {
+                                                    documentAt(currentPosition)?.let { document ->
+                                                        selectedUris = if (selectedUris.isNotEmpty()) {
+                                                            if (document.uri in selectedUris) selectedUris - document.uri
+                                                            else selectedUris + document.uri
+                                                        } else {
+                                                            openedDocument = document
+                                                            emptySet()
+                                                        }
+                                                    }
+                                                }
+                                            } else {
+                                                val dragSelection = selectedUris.toMutableSet()
+                                                var lastSelectedUri: Uri? = null
+                                                fun selectAt(position: androidx.compose.ui.geometry.Offset) {
+                                                    val document = documentAt(position)
+                                                    if (document != null && document.uri != lastSelectedUri) {
+                                                        dragSelection.add(document.uri)
+                                                        selectedUris = dragSelection.toSet()
+                                                        lastSelectedUri = document.uri
+                                                    }
+                                                }
+                                                down.consume()
+                                                selectAt(down.position)
+                                                while (true) {
+                                                    val event = awaitPointerEvent()
+                                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                                    if (change.pressed) {
+                                                        change.consume()
+                                                        selectAt(change.position)
+                                                    } else {
+                                                        change.consume()
+                                                        break
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    },
                                     contentPadding = PaddingValues(2.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(2.dp), verticalArrangement = Arrangement.spacedBy(2.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
                                 ) {
                                     items(allFiles, key = { it.uri.toString() }) { doc ->
-                                        DocumentTile(doc, doc.uri in selectedUris, false,
-                                            onClick = {
-                                                if (selectedUris.isNotEmpty()) selectedUris = if (doc.uri in selectedUris) selectedUris - doc.uri else selectedUris + doc.uri
-                                                else openedDocument = doc
-                                            },
-                                            onLongClick = {
-                                                selectedUris = if (doc.uri in selectedUris) selectedUris - doc.uri else selectedUris + doc.uri
-                                            }
+                                        DocumentTile(
+                                            document = doc,
+                                            selected = doc.uri in selectedUris,
+                                            showPath = false,
+                                            handleGesturesExternally = true,
+                                            onClick = {},
+                                            onLongClick = {}
                                         )
                                     }
                                 }
@@ -684,7 +763,8 @@ private fun DocumentTile(
     selected: Boolean,
     showPath: Boolean,
     onClick: () -> Unit,
-    onLongClick: () -> Unit
+    onLongClick: () -> Unit,
+    handleGesturesExternally: Boolean = false
 ) {
     val icon = when {
         document.isDirectory -> Icons.Default.Folder
@@ -704,7 +784,7 @@ private fun DocumentTile(
         Modifier.fillMaxWidth()
             .border(2.dp, if (selected) Color(0xFFFF4D7D) else Color.Transparent, MaterialTheme.shapes.medium)
             .background(Color(0xFF191919), MaterialTheme.shapes.medium)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .then(if (handleGesturesExternally) Modifier else Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick))
     ) {
         Box(Modifier.fillMaxWidth().aspectRatio(1f).background(Color(0xFF242424)), contentAlignment = Alignment.Center) {
             Icon(icon, null, tint = tint, modifier = Modifier.size(48.dp))
@@ -761,9 +841,8 @@ private fun scanDocuments(context: Context): Pair<List<BrowserDocument>, String?
             pathColumn
         ) + if (pathColumn == MediaStore.MediaColumns.DATA) emptyList() else listOf(MediaStore.MediaColumns.DATA)).distinct().toTypedArray()
         val files = mutableListOf<BrowserDocument>()
-        // Build the folder tree from every indexed file, not only supported documents.
-        // This keeps Doc > Folder visible like Media > Folder even when a directory
-        // contains photos, videos, archives, or other non-document files as well.
+        // Build folders only from supported-document paths so Doc > Folder does not
+        // show directories that contain only photos, videos, archives, or other files.
         val folderPaths = linkedSetOf<String>()
         val collection = MediaStore.Files.getContentUri("external")
         context.contentResolver.query(collection, projection, null, null, MediaStore.MediaColumns.DISPLAY_NAME + " ASC")?.use { cursor ->
