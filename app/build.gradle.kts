@@ -47,6 +47,9 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.documentfile:documentfile:1.0.1")
+    // Apache POI HWPF extracts text from legacy binary Word .doc files.
+    implementation("org.apache.poi:poi:5.3.0")
+    implementation("org.apache.poi:poi-scratchpad:5.3.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("io.coil-kt:coil-video:2.7.0")
     implementation("androidx.media3:media3-exoplayer:1.5.1")
