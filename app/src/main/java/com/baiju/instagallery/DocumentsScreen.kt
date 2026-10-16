@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ContentCopy
@@ -107,7 +108,7 @@ private data class BrowserDocument(
 }
 
 private val supportedDocumentExtensions = setOf(
-    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "csv", "tsv", "ssv", "rtf",
+    "pdf", "doc", "docx", "xls", "xlsx", "pptx", "txt", "csv", "tsv", "ssv", "rtf",
     "md", "markdown", "log", "html", "htm", "xml", "json", "yaml", "yml", "toml", "ini",
     "properties", "conf", "env", "sql", "java", "kt", "kts", "js", "ts", "jsx", "tsx",
     "css", "scss", "sass", "less", "sh", "bash", "py", "rb", "php", "c", "h", "cpp",
@@ -146,6 +147,7 @@ internal fun DocumentsScreen(
     var selectedFolderPath by remember { mutableStateOf<String?>(null) }
     var showDetails by remember { mutableStateOf(false) }
     var showRename by remember { mutableStateOf(false) }
+    var showDeleteConfirmation by remember { mutableStateOf(false) }
     var renameFolderMode by remember { mutableStateOf(false) }
     var renameText by remember { mutableStateOf("") }
     var transferMode by remember { mutableStateOf<String?>(null) }
@@ -294,6 +296,44 @@ internal fun DocumentsScreen(
                     append("\n\n")
                     append(outcome.second.take(4).joinToString("\n"))
                     if (outcome.second.size > 4) append("\nAnd ${outcome.second.size - 4} more issue(s).")
+                }
+            }
+        }
+    }
+
+    fun deleteSelectedDocuments() {
+        val targets = selectedDocuments
+        if (targets.isEmpty()) return
+        showDeleteConfirmation = false
+        isActionRunning = true
+        scope.launch {
+            val outcome = withContext(Dispatchers.IO) {
+                var deleted = 0
+                val errors = mutableListOf<String>()
+                targets.forEach { document ->
+                    try {
+                        val file = fileForDocument(document)
+                        if (!file.exists()) errors.add(document.name + ": file not found.")
+                        else if (!file.delete()) errors.add(document.name + ": delete failed.")
+                        else {
+                            deleted++
+                            scanChangedPaths(file.absolutePath)
+                        }
+                    } catch (e: Exception) {
+                        errors.add(document.name + ": " + (e.message ?: "delete failed"))
+                    }
+                }
+                deleted to errors
+            }
+            isActionRunning = false
+            selectedUris = emptySet()
+            scanRevision++
+            statusMessage = buildString {
+                append("Deleted ${outcome.first} of ${targets.size} document(s).")
+                if (outcome.second.isNotEmpty()) {
+                    append("\\n\\n")
+                    append(outcome.second.take(4).joinToString("\\n"))
+                    if (outcome.second.size > 4) append("\\nAnd ${outcome.second.size - 4} more issue(s).")
                 }
             }
         }
@@ -678,6 +718,7 @@ internal fun DocumentsScreen(
                 DocumentBottomAction("Copy", Icons.Default.ContentCopy, Modifier.weight(1f)) { transferMode = "Copy" }
                 DocumentBottomAction("Move", Icons.Default.DriveFileMove, Modifier.weight(1f)) { transferMode = "Move" }
                 DocumentBottomAction("Share", Icons.Default.Share, Modifier.weight(1f)) { shareSelectedDocuments() }
+                DocumentBottomAction("Delete", Icons.Default.Delete, Modifier.weight(1f)) { showDeleteConfirmation = true }
             }
             selectedFolderPath != null -> Row(
                 Modifier.fillMaxWidth().background(Color(0xFF171717)).padding(horizontal = 8.dp, vertical = 4.dp),
@@ -720,6 +761,18 @@ internal fun DocumentsScreen(
             }
         },
         confirmButton = { TextButton(onClick = { showDetails = false }) { Text("Done") } }
+    )
+
+    if (showDeleteConfirmation) AlertDialog(
+        onDismissRequest = { showDeleteConfirmation = false },
+        title = { Text("Delete selected documents?") },
+        text = { Text("This will permanently delete ${selectedDocuments.size} selected document(s) from your device.") },
+        confirmButton = {
+            TextButton(onClick = { deleteSelectedDocuments() }) {
+                Text("Delete", color = Color(0xFFFF6B6B))
+            }
+        },
+        dismissButton = { TextButton(onClick = { showDeleteConfirmation = false }) { Text("Cancel") } }
     )
 
     if (showRename) AlertDialog(
@@ -1497,26 +1550,6 @@ private fun readDocumentText(context: Context, document: BrowserDocument): Pair<
             if (text.isBlank()) null to "No readable data was found in this Excel workbook." else text to null
         } catch (e: Exception) {
             null to "Could not read this legacy Excel .xls file: " + (e.message ?: "unsupported or damaged file")
-        }
-    }
-    if (ext == "ppt") {
-        return try {
-            // QuickButCruddyTextExtractor reads the legacy binary record stream directly.
-            // Unlike HSLFSlideShow's shape model, it avoids Android-missing java.awt APIs.
-            val text = ByteArrayInputStream(bytes).use { input ->
-                val extractor = org.apache.poi.hslf.extractor.QuickButCruddyTextExtractor(input)
-                try {
-                    extractor.getTextAsString()
-                } finally {
-                    extractor.close()
-                }
-            }
-            if (text.isBlank()) null to "No readable text was found in this PowerPoint presentation."
-            else text to null
-        } catch (e: Exception) {
-            null to "Could not read this legacy PowerPoint .ppt file: " + (e.message ?: "unsupported or damaged file")
-        } catch (e: LinkageError) {
-            null to "Could not load the legacy PowerPoint text reader: " + (e.message ?: "missing Android-compatible dependency")
         }
     }
     return null to "This file format is not supported by the built-in reader yet."
