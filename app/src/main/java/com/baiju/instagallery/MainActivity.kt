@@ -46,6 +46,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.layout.*
@@ -913,52 +914,45 @@ private fun GalleryApp() {
             }
         } else {
             Column(Modifier.fillMaxSize().background(Color(0xFF101010)).statusBarsPadding().pointerInput(tab, menuScope, menuContent, documentFolderMode, documentViewerOpen, selected, selectedFolder, transferMode, mainMenuOpen) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    var multiTouchSwipe = false
-                    var deltaX = 0f
-                    var deltaY = 0f
-                    while (true) {
-                        val event = awaitPointerEvent(PointerEventPass.Final)
-                        val pressed = event.changes.filter { it.pressed }
-                        if (pressed.size >= 2) multiTouchSwipe = true
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        deltaX = change.position.x - down.position.x
-                        deltaY = change.position.y - down.position.y
-                        if (!change.pressed) {
-                            val deliberateSwipeThreshold = maxOf(viewConfiguration.touchSlop * 1.8f, 48.dp.toPx())
-                            if (!multiTouchSwipe && kotlin.math.abs(deltaX) >= deliberateSwipeThreshold &&
-                                kotlin.math.abs(deltaX) > kotlin.math.abs(deltaY) * 1.4f &&
-                                selected.isEmpty() && selectedFolder == null && transferMode == null &&
-                                !mainMenuOpen && !documentViewerOpen
-                            ) {
-                                // Cycle: Media Folder -> Media All -> Doc Folder -> Doc All -> Media Folder.
-                                val currentIndex = when {
-                                    menuContent == "Media" && menuScope == "Folder" -> 0
-                                    menuContent == "Media" && menuScope == "All" -> 1
-                                    menuContent == "Doc" && menuScope == "Folder" -> 2
-                                    else -> 3
-                                }
-                                val nextIndex = if (deltaX < 0f) (currentIndex + 1) % 4 else (currentIndex + 3) % 4
-                                menuContent = if (nextIndex < 2) "Media" else "Doc"
-                                menuScope = if (nextIndex == 0 || nextIndex == 2) "Folder" else "All"
-                                documentFolderMode = menuContent == "Doc" && menuScope == "Folder"
-                                tab = when {
-                                    menuContent == "Doc" -> "Documents"
-                                    menuScope == "Folder" -> "Folders"
-                                    else -> "Reel"
-                                }
-                                selectedAlbum = "All media"
-                                selected = emptySet()
-                                selectedFolder = null
-                                if (tab == "Documents") {
-                                    viewerStartUri = null
-                                    viewerDisplayUri = null
-                                    viewerCurrentUri = null
-                                }
+                var totalHorizontalDrag = 0f
+                detectHorizontalDragGestures(
+                    onDragStart = { totalHorizontalDrag = 0f },
+                    onHorizontalDrag = { change, dragAmount ->
+                        totalHorizontalDrag += dragAmount
+                        change.consume()
+                    },
+                    onDragCancel = { totalHorizontalDrag = 0f },
+                    onDragEnd = {
+                        val threshold = maxOf(viewConfiguration.touchSlop * 2.5f, 96.dp.toPx())
+                        val canSwitchMode = selected.isEmpty() && selectedFolder == null &&
+                            transferMode == null && !mainMenuOpen && !documentViewerOpen
+                        if (canSwitchMode && kotlin.math.abs(totalHorizontalDrag) >= threshold) {
+                            // One deliberate horizontal swipe advances exactly one mode.
+                            val currentIndex = when {
+                                menuContent == "Media" && menuScope == "Folder" -> 0
+                                menuContent == "Media" && menuScope == "All" -> 1
+                                menuContent == "Doc" && menuScope == "Folder" -> 2
+                                else -> 3
                             }
-                            break
+                            val nextIndex = if (totalHorizontalDrag < 0f) (currentIndex + 1) % 4 else (currentIndex + 3) % 4
+                            menuContent = if (nextIndex < 2) "Media" else "Doc"
+                            menuScope = if (nextIndex == 0 || nextIndex == 2) "Folder" else "All"
+                            documentFolderMode = menuContent == "Doc" && menuScope == "Folder"
+                            tab = when {
+                                menuContent == "Doc" -> "Documents"
+                                menuScope == "Folder" -> "Folders"
+                                else -> "Reel"
+                            }
+                            selectedAlbum = "All media"
+                            selected = emptySet()
+                            selectedFolder = null
+                            if (tab == "Documents") {
+                                viewerStartUri = null
+                                viewerDisplayUri = null
+                                viewerCurrentUri = null
+                            }
                         }
+                        totalHorizontalDrag = 0f
                     }
                 }
             }) {
@@ -2062,7 +2056,7 @@ private fun ReelsViewer(
     LaunchedEffect(pagerState.currentPage, autoPlayNext, currentMediaZoomed) {
         if (currentMediaZoomed) return@LaunchedEffect
         val item = items.getOrNull(pagerState.currentPage) ?: return@LaunchedEffect
-        if (!item.isVideo && autoPlayNext) {
+        if (!item.isVideo && !item.isAudio && autoPlayNext) {
             val page = pagerState.currentPage
             delay(5_000)
             if (
