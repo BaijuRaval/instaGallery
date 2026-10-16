@@ -1003,6 +1003,7 @@ private fun BuiltInDocumentReader(document: BrowserDocument, onBack: () -> Unit)
                 }
             }
             document.extension == "pdf" -> PdfDocumentReader(document.uri)
+            document.extension == "ppt" -> LegacyPptDocumentReader(document.uri)
             else -> TextBasedDocumentReader(document)
         }
     }
@@ -1015,6 +1016,68 @@ private fun Context.findActivity(): Activity? {
         current = current.baseContext
     }
     return current as? Activity
+}
+
+private data class LegacyPptRenderState(val slides: List<Bitmap>, val error: String?)
+
+@Composable
+private fun LegacyPptDocumentReader(uri: Uri) {
+    val context = LocalContext.current
+    var state by remember(uri) { mutableStateOf<LegacyPptRenderState?>(null) }
+    var zoom by remember(uri) { mutableFloatStateOf(1f) }
+
+    LaunchedEffect(uri) {
+        state = withContext(Dispatchers.IO) {
+            try {
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: throw IllegalStateException("Could not open this PowerPoint file.")
+                val presentation = org.apache.poi.hslf.usermodel.SlideShow(ByteArrayInputStream(bytes))
+                try {
+                    val pageSize = presentation.pageSize
+                    val pageWidth = pageSize.width.toInt().coerceIn(1, 4096)
+                    val pageHeight = pageSize.height.toInt().coerceIn(1, 4096)
+                    val rendered = presentation.slides.map { slide ->
+                        val bitmap = Bitmap.createBitmap(pageWidth, pageHeight, Bitmap.Config.ARGB_8888)
+                        val canvas = android.graphics.Canvas(bitmap)
+                        canvas.drawColor(android.graphics.Color.WHITE)
+                        slide.draw(net.pbdavey.awt.Graphics2D(canvas))
+                        bitmap
+                    }
+                    if (rendered.isEmpty()) LegacyPptRenderState(emptyList(), "No slides were found in this presentation.")
+                    else LegacyPptRenderState(rendered, null)
+                } finally {
+                    presentation.close()
+                }
+            } catch (e: Exception) {
+                LegacyPptRenderState(emptyList(), "Could not render this .ppt file: " + (e.message ?: "unsupported or damaged file"))
+            } catch (e: LinkageError) {
+                LegacyPptRenderState(emptyList(), "The Android PowerPoint renderer could not load: " + (e.message ?: "missing dependency"))
+            }
+        }
+    }
+
+    val result = state
+    if (result == null) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = Color(0xFFFF4D7D))
+        }
+    } else if (result.error != null) {
+        Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+            Text(result.error, color = Color.White)
+        }
+    } else {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(8.dp)) {
+            result.slides.forEachIndexed { index, bitmap ->
+                Text("Slide ${index + 1} / ${result.slides.size}", color = Color.LightGray, fontSize = 12.sp)
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "PowerPoint slide ${index + 1}",
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+                        .graphicsLayer(scaleX = zoom, scaleY = zoom)
+                )
+            }
+        }
+    }
 }
 
 private data class PdfDocumentInfo(val pageCount: Int, val error: String?)
