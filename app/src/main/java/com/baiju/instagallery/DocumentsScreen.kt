@@ -152,7 +152,7 @@ internal fun DocumentsScreen(
             title = when {
                 currentFolder.isNotBlank() -> currentFolder.substringAfterLast('/')
                 viewMode == "folders" -> "Folder"
-                else -> "Reel"
+                else -> "All"
             },
             subtitle = when {
                 !hasAccess -> "Automatic document scan"
