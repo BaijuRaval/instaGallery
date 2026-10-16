@@ -1047,35 +1047,84 @@ private fun PdfDocumentReader(uri: Uri) {
         else -> BoxWithConstraints(
             Modifier.fillMaxSize().clipToBounds()
                 .pointerInput(Unit) {
-                    detectTransformGestures(panZoomLock = true) { centroid, pan, gestureZoom, _ ->
-                        val oldScale = zoom
-                        // Do not allow the document to shrink below its fitted initial size.
-                        val newScale = (oldScale * gestureZoom).coerceIn(1f, 4f)
-                        if (newScale != oldScale) {
-                            // Keep the document point under the fingers fixed during the pinch.
-                            val scaleRatio = newScale / oldScale
-                            val proposedX = centroid.x - (centroid.x - translation.x) * scaleRatio
-                            val proposedY = centroid.y - (centroid.y - translation.y) * scaleRatio
-                            val maxX = size.width * (1f - newScale)
-                            val maxY = size.height * (1f - newScale)
-                            translation = Offset(
-                                proposedX.coerceIn(maxX, 0f),
-                                proposedY.coerceIn(maxY, 0f)
-                            )
-                            zoom = newScale
-                        } else if (oldScale > 1f) {
-                            val maxX = size.width * (1f - oldScale)
-                            val maxY = size.height * (1f - oldScale)
-                            translation = Offset(
-                                (translation.x + pan.x).coerceIn(maxX, 0f),
-                                (translation.y + pan.y).coerceIn(maxY, 0f)
-                            )
+                    awaitEachGesture {
+                        val firstDown = awaitFirstDown(
+                            requireUnconsumed = false,
+                            pass = PointerEventPass.Initial
+                        )
+                        var previousDistance = 0f
+                        var previousCentroid = firstDown.position
+                        var horizontalPanStarted = false
+                        var totalPan = Offset.Zero
+                        var multiTouch = false
+
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val pointers = event.changes.filter { it.pressed }
+                            if (pointers.isEmpty()) break
+
+                            if (pointers.size >= 2) {
+                                multiTouch = true
+                                val first = pointers[0].position
+                                val second = pointers[1].position
+                                val distance = (first - second).getDistance()
+                                val centroid = Offset(
+                                    (first.x + second.x) / 2f,
+                                    (first.y + second.y) / 2f
+                                )
+
+                                if (previousDistance > 1f && distance > 1f) {
+                                    val oldScale = zoom
+                                    val newScale = (oldScale * distance / previousDistance).coerceIn(1f, 4f)
+                                    if (newScale != oldScale) {
+                                        val ratio = newScale / oldScale
+                                        val proposedX = centroid.x - (centroid.x - translation.x) * ratio
+                                        val proposedY = centroid.y - (centroid.y - translation.y) * ratio
+                                        val maxX = size.width * (1f - newScale)
+                                        val maxY = size.height * (1f - newScale)
+                                        translation = Offset(
+                                            proposedX.coerceIn(maxX, 0f),
+                                            proposedY.coerceIn(maxY, 0f)
+                                        )
+                                        zoom = newScale
+                                    }
+                                }
+                                previousDistance = distance
+                                previousCentroid = centroid
+                                // Consume only actual multi-touch gestures; ordinary one-finger
+                                // scrolling remains available to LazyColumn.
+                                event.changes.forEach { if (it.pressed) it.consume() }
+                            } else {
+                                previousDistance = 0f
+                                val change = pointers.first()
+                                val delta = change.position - previousCentroid
+                                totalPan += delta
+                                val slop = viewConfiguration.touchSlop
+
+                                // Once zoomed in, take over only a clearly horizontal drag.
+                                // Vertical drags are left unconsumed for LazyColumn page scrolling.
+                                if (!multiTouch && zoom > 1.001f) {
+                                    if (!horizontalPanStarted &&
+                                        kotlin.math.abs(totalPan.x) > slop &&
+                                        kotlin.math.abs(totalPan.x) > kotlin.math.abs(totalPan.y) * 1.25f
+                                    ) horizontalPanStarted = true
+
+                                    if (horizontalPanStarted) {
+                                        val maxX = size.width * (1f - zoom)
+                                        translation = Offset(
+                                            (translation.x + delta.x).coerceIn(maxX, 0f),
+                                            translation.y
+                                        )
+                                        change.consume()
+                                    }
+                                }
+
+                                previousCentroid = change.position
+                            }
                         }
                     }
                 }
         ) {
-            // Scale the rendered PDF layer itself. Changing layout width under a LazyColumn's
-            // constraints can leave the page fitted or cause the pinch direction to feel inverted.
             LazyColumn(
                 state = pdfListState,
                 modifier = Modifier.fillMaxSize()
