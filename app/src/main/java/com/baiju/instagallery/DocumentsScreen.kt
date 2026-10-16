@@ -1420,7 +1420,7 @@ private fun readDocumentText(context: Context, document: BrowserDocument): Pair<
                 HSSFWorkbook(input).use { workbook ->
                     val formatter = DataFormatter()
                     val evaluator = workbook.creationHelper.createFormulaEvaluator()
-                    (0 until workbook.numberOfSheets).joinToString("\\n\\n") { sheetIndex ->
+                    (0 until workbook.numberOfSheets).joinToString("\n\n") { sheetIndex ->
                         val sheet = workbook.getSheetAt(sheetIndex)
                         val rows = (sheet.firstRowNum..sheet.lastRowNum).mapNotNull { rowIndex ->
                             val row = sheet.getRow(rowIndex) ?: return@mapNotNull null
@@ -1429,7 +1429,7 @@ private fun readDocumentText(context: Context, document: BrowserDocument): Pair<
                             }
                             if (values.all { it.isBlank() }) null else values.joinToString("    ").trimEnd()
                         }
-                        "Sheet " + (sheetIndex + 1) + "\\n" + rows.joinToString("\\n")
+                        "Sheet " + (sheetIndex + 1) + "\n" + rows.joinToString("\n")
                     }
                 }
             }
