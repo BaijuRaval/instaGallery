@@ -1089,11 +1089,7 @@ private fun PdfDocumentReader(uri: Uri) {
                     }
                 }
             }
-            DocumentZoomControls(
-                zoom = zoom,
-                onZoomChange = { zoom = it.coerceIn(0.5f, 4f) },
-                modifier = Modifier.align(Alignment.CenterEnd).padding(end = 12.dp).zIndex(3f)
-            )
+            // PDF zoom is gesture-only; the same zoom value scales every page together.
         }
     }
 }
