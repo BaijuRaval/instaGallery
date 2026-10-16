@@ -71,6 +71,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.ContentCopy
@@ -139,6 +141,7 @@ private data class GalleryMedia(
     val durationMs: Long = 0L
 ) {
     val isVideo: Boolean get() = mimeType.startsWith("video/")
+    val isAudio: Boolean get() = mimeType.startsWith("audio/")
     // Use the 10-second frame for long videos, but never request past the end of a short clip.
     val thumbnailTimeMs: Long get() = if (!isVideo) 0L else if (durationMs <= 0L) 10_000L
         else if (durationMs > 10_000L) 10_000L else (durationMs - 500L).coerceAtLeast(0L)
@@ -351,9 +354,10 @@ private fun GalleryApp() {
             Build.VERSION.SDK_INT >= 34 -> arrayOf(
                 Manifest.permission.READ_MEDIA_IMAGES,
                 Manifest.permission.READ_MEDIA_VIDEO,
+                Manifest.permission.READ_MEDIA_AUDIO,
                 Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
             )
-            Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
+            Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_AUDIO)
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.M -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE)
             else -> emptyArray()
         }
@@ -626,7 +630,7 @@ private fun GalleryApp() {
     val visible = remember(media, selectedAlbum, hiddenFolders, tab) {
         (if (selectedAlbum == "All media") media else media.filter { it.album == selectedAlbum })
             .filter { it.album !in hiddenFolders }
-            .filter { item -> when (tab) { "Images" -> !item.isVideo; "Videos" -> item.isVideo; else -> true } }
+            .filter { item -> when { menuContent == "Audio" -> item.isAudio; tab == "Images" -> !item.isVideo && !item.isAudio; tab == "Videos" -> item.isVideo; else -> !item.isAudio } }
     }
 
     LaunchedEffect(hasPermission, media, rememberLastPlayed) {
@@ -999,6 +1003,7 @@ private fun GalleryApp() {
                                     tab == "Folders" -> "Folder"
                                     tab == "Images" -> "Images"
                                     tab == "Videos" -> "Videos"
+                                    menuContent == "Audio" -> "Audio"
                                     else -> "All"
                                 },
                                 subtitle = if (transferMode != null) "${transferMode} to a folder" else "${visible.size} items",
@@ -1019,7 +1024,7 @@ private fun GalleryApp() {
                     val animatedVisible = remember(media, hiddenFolders, gridAlbum, gridTab) {
                         (if (gridAlbum == "All media") media else media.filter { it.album == gridAlbum })
                             .filter { it.album !in hiddenFolders }
-                            .filter { item -> when (gridTab) { "Images" -> !item.isVideo; "Videos" -> item.isVideo; else -> true } }
+                            .filter { item -> when { menuContent == "Audio" -> item.isAudio; gridTab == "Images" -> !item.isVideo && !item.isAudio; gridTab == "Videos" -> item.isVideo; else -> !item.isAudio } }
                     }
                     when {
                     !hasPermission -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1031,7 +1036,7 @@ private fun GalleryApp() {
                     }
                     animatedVisible.isEmpty() && !(gridTab == "Folders" && gridAlbum == "All media") -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No photos or videos found", color = Color.LightGray) }
                     gridTab == "Folders" && gridAlbum == "All media" -> {
-                        val folders = media.filter { it.album !in hiddenFolders }.groupBy { it.album }.toSortedMap()
+                        val folders = media.filter { it.album !in hiddenFolders && (if (menuContent == "Audio") it.isAudio else !it.isAudio) }.groupBy { it.album }.toSortedMap()
                         if (folders.isEmpty()) {
                             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No folders found", color = Color.LightGray) }
                         } else {
@@ -1476,7 +1481,7 @@ private fun GalleryMenuScreen(
             }
         }
 
-        Text("Media / Doc", color = Color.LightGray, fontSize = 13.sp)
+        Text("Media / Doc / Audio", color = Color.LightGray, fontSize = 13.sp)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Surface(
                 onClick = { onSelectContent("Media") },
@@ -1500,6 +1505,18 @@ private fun GalleryMenuScreen(
                     Icon(Icons.Default.Description, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(24.dp))
                     Spacer(Modifier.width(10.dp))
                     Text("Doc", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+            Surface(
+                onClick = { onSelectContent("Audio") },
+                color = if (currentContent == "Audio") selectedColor else normalColor,
+                shape = MaterialTheme.shapes.large,
+                modifier = Modifier.weight(1f)
+            ) {
+                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.MusicNote, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(24.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Text("Audio", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -1671,6 +1688,7 @@ private fun Context.ensureThumbnailCache(item: GalleryMedia): Boolean {
         var bitmap: Bitmap? = null
         val temporary = File(directory, target.name + ".tmp")
         try {
+            if (item.isAudio) return@synchronized false
             bitmap = if (item.isVideo) createVideoThumbnail(item) else createImageThumbnail(item.uri)
             if (bitmap == null) return@synchronized false
             val wrote = FileOutputStream(temporary).use { output ->
@@ -1792,9 +1810,9 @@ private fun Context.hasMediaPermission(): Boolean {
 
 private fun Context.queryGalleryMedia(): List<GalleryMedia> {
     val result = mutableListOf<GalleryMedia>()
-    listOf(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, MediaStore.Video.Media.EXTERNAL_CONTENT_URI).forEach { collection ->
+    listOf(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, MediaStore.Video.Media.EXTERNAL_CONTENT_URI, MediaStore.Audio.Media.EXTERNAL_CONTENT_URI).forEach { collection ->
         val projection = mutableListOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.MIME_TYPE, MediaStore.MediaColumns.DATE_ADDED, MediaStore.MediaColumns.SIZE, "bucket_display_name").apply {
-            if (collection == MediaStore.Video.Media.EXTERNAL_CONTENT_URI) add(MediaStore.Video.VideoColumns.DURATION)
+            if (collection == MediaStore.Video.Media.EXTERNAL_CONTENT_URI || collection == MediaStore.Audio.Media.EXTERNAL_CONTENT_URI) add(MediaStore.MediaColumns.DURATION)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) add(MediaStore.MediaColumns.RELATIVE_PATH)
             else add(MediaStore.MediaColumns.DATA)
         }.toTypedArray()
@@ -1806,7 +1824,7 @@ private fun Context.queryGalleryMedia(): List<GalleryMedia> {
                 val dateCol = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_ADDED)
                 val sizeCol = cursor.getColumnIndex(MediaStore.MediaColumns.SIZE)
                 val albumCol = cursor.getColumnIndex("bucket_display_name")
-                val durationCol = cursor.getColumnIndex(MediaStore.Video.VideoColumns.DURATION)
+                val durationCol = cursor.getColumnIndex(MediaStore.MediaColumns.DURATION)
                 val pathCol = cursor.getColumnIndex(if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) MediaStore.MediaColumns.RELATIVE_PATH else MediaStore.MediaColumns.DATA)
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idCol)
@@ -1820,8 +1838,8 @@ private fun Context.queryGalleryMedia(): List<GalleryMedia> {
                             val storedPath = cursor.getString(pathCol).orEmpty()
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) storedPath
                             else File(storedPath).parentFile?.absolutePath?.plus(File.separator).orEmpty()
-                        } else if (collection == MediaStore.Video.Media.EXTERNAL_CONTENT_URI) "Movies/" else "Pictures/",
-                        if (collection == MediaStore.Video.Media.EXTERNAL_CONTENT_URI && durationCol >= 0) cursor.getLong(durationCol) else 0L)
+                        } else when (collection) { MediaStore.Video.Media.EXTERNAL_CONTENT_URI -> "Movies/"; MediaStore.Audio.Media.EXTERNAL_CONTENT_URI -> "Music/"; else -> "Pictures/" },
+                        if ((collection == MediaStore.Video.Media.EXTERNAL_CONTENT_URI || collection == MediaStore.Audio.Media.EXTERNAL_CONTENT_URI) && durationCol >= 0) cursor.getLong(durationCol) else 0L)
                 }
             }
         } catch (_: SecurityException) {}
@@ -1833,7 +1851,7 @@ private fun Context.safeDestinationPath(item: GalleryMedia, destination: Gallery
     val raw = destination.relativePath.trim().trim('/')
     val parts = raw.split('/').filter { it.isNotBlank() }
     val root = parts.firstOrNull().orEmpty()
-    val allowedRoots = if (item.isVideo) setOf("Movies", "DCIM", "Pictures") else setOf("DCIM", "Pictures")
+    val allowedRoots = when { item.isAudio -> setOf("Music", "Recordings", "Alarms", "Podcasts"); item.isVideo -> setOf("Movies", "DCIM", "Pictures"); else -> setOf("DCIM", "Pictures") }
     return if (root in allowedRoots) {
         "$raw/"
     } else {
@@ -2056,7 +2074,9 @@ private fun ReelsViewer(
             beyondViewportPageCount = 0
         ) { page ->
             val item = items[page]
-            if (item.isVideo) {
+            if (item.isAudio) {
+                AudioPage(item = item, active = page == pagerState.currentPage, playing = playing, onTogglePlay = { playing = !playing })
+            } else if (item.isVideo) {
                 VideoPage(
                     item = item,
                     active = page == pagerState.currentPage,
@@ -2615,6 +2635,68 @@ private fun VideoPage(
                     fontSize = 12.sp,
                     modifier = Modifier.align(Alignment.End)
                 )
+            }
+        }
+    }
+}
+
+
+@Composable
+private fun AudioPage(item: GalleryMedia, active: Boolean, playing: Boolean, onTogglePlay: () -> Unit) {
+    val context = LocalContext.current
+    val player = remember(item.uri) {
+        ExoPlayer.Builder(context).build().apply { setMediaItem(MediaItem.fromUri(item.uri)); prepare() }
+    }
+    var position by remember(item.uri) { mutableLongStateOf(0L) }
+    var duration by remember(item.uri) { mutableLongStateOf(item.durationMs.coerceAtLeast(0L)) }
+    val infinite = androidx.compose.animation.core.rememberInfiniteTransition(label = "audioVisualizer")
+    val pulse by infinite.animateFloat(initialValue = 0.25f, targetValue = 1f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = tween(650, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+        ), label = "audioPulse")
+    DisposableEffect(player) { onDispose { player.release() } }
+    LaunchedEffect(active, playing) { player.playWhenReady = active && playing }
+    LaunchedEffect(active, player) {
+        while (active) {
+            position = player.currentPosition.coerceAtLeast(0L)
+            val actual = player.duration
+            if (actual > 0L && actual != androidx.media3.common.C.TIME_UNSET) duration = actual
+            delay(250)
+        }
+    }
+    Box(Modifier.fillMaxSize().background(Color(0xFF09090D)), contentAlignment = Alignment.Center) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 28.dp), horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(22.dp)) {
+            Box(Modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) {
+                androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+                    val bars = List(40) { index -> 18f + ((index * 37 + index * index * 11) % 90) }
+                    val barWidth = size.width / (bars.size * 1.8f)
+                    bars.forEachIndexed { index, height ->
+                        val barHeight = height * (if (active && playing) pulse else 0.22f)
+                        val x = index * (size.width / bars.size) + barWidth / 2
+                        drawRoundRect(Color(0xFFFF4D7D).copy(alpha = 0.55f + (index % 4) * 0.1f),
+                            androidx.compose.ui.geometry.Offset(x, (size.height - barHeight) / 2f),
+                            androidx.compose.ui.geometry.Size(barWidth, barHeight.coerceAtLeast(5f)),
+                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(barWidth, barWidth))
+                    }
+                }
+            }
+            Icon(Icons.Default.MusicNote, contentDescription = "Audio", tint = Color(0xFFFF4D7D), modifier = Modifier.size(68.dp))
+            Text(item.name, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(item.album, color = Color.LightGray, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Column(Modifier.fillMaxWidth()) {
+                Slider(value = if (duration > 0L) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f,
+                    onValueChange = { fraction -> position = (fraction * duration).toLong(); player.seekTo(position) },
+                    colors = SliderDefaults.colors(thumbColor = Color(0xFFFF4D7D), activeTrackColor = Color(0xFFFF4D7D)))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(formatPlaybackTime(position), color = Color.LightGray, fontSize = 12.sp)
+                    Text(formatPlaybackTime(duration), color = Color.LightGray, fontSize = 12.sp)
+                }
+            }
+            IconButton(onClick = onTogglePlay, modifier = Modifier.size(68.dp)) {
+                Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    contentDescription = if (playing) "Pause" else "Play", tint = Color.White, modifier = Modifier.size(48.dp))
             }
         }
     }
