@@ -35,6 +35,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Remove
@@ -1318,12 +1319,14 @@ private fun TextBasedDocumentReader(document: BrowserDocument) {
             }
         ) {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp)) {
-                Text(
-                    content.orEmpty(),
-                    color = Color(0xFFEDEDED),
-                    fontSize = 14.sp * zoom,
-                    lineHeight = 21.sp * zoom
-                )
+                SelectionContainer {
+                    Text(
+                        content.orEmpty(),
+                        color = Color(0xFFEDEDED),
+                        fontSize = 14.sp * zoom,
+                        lineHeight = 21.sp * zoom
+                    )
+                }
             }
         }
         else -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
