@@ -1054,7 +1054,7 @@ private fun PdfDocumentReader(uri: Uri) {
                         )
                         var previousDistance = 0f
                         var previousCentroid = firstDown.position
-                        var horizontalPanStarted = false
+                        var panAxis = 0 // 0=undecided, 1=horizontal, 2=vertical
                         var totalPan = Offset.Zero
                         var multiTouch = false
 
@@ -1101,21 +1101,36 @@ private fun PdfDocumentReader(uri: Uri) {
                                 totalPan += delta
                                 val slop = viewConfiguration.touchSlop
 
-                                // Once zoomed in, take over only a clearly horizontal drag.
-                                // Vertical drags are left unconsumed for LazyColumn page scrolling.
+                                // At zoom, pan the transformed content in either direction.
+                                // At a vertical boundary, leave the gesture unconsumed so the
+                                // LazyColumn can continue to the previous/next PDF page.
                                 if (!multiTouch && zoom > 1.001f) {
-                                    if (!horizontalPanStarted &&
-                                        kotlin.math.abs(totalPan.x) > slop &&
-                                        kotlin.math.abs(totalPan.x) > kotlin.math.abs(totalPan.y) * 1.25f
-                                    ) horizontalPanStarted = true
+                                    if (panAxis == 0 &&
+                                        (kotlin.math.abs(totalPan.x) > slop ||
+                                            kotlin.math.abs(totalPan.y) > slop)
+                                    ) {
+                                        panAxis = if (kotlin.math.abs(totalPan.x) >
+                                            kotlin.math.abs(totalPan.y) * 1.15f
+                                        ) 1 else 2
+                                    }
 
-                                    if (horizontalPanStarted) {
-                                        val maxX = size.width * (1f - zoom)
-                                        translation = Offset(
-                                            (translation.x + delta.x).coerceIn(maxX, 0f),
-                                            translation.y
-                                        )
-                                        change.consume()
+                                    when (panAxis) {
+                                        1 -> {
+                                            val minX = size.width * (1f - zoom)
+                                            val nextX = (translation.x + delta.x).coerceIn(minX, 0f)
+                                            if (nextX != translation.x) {
+                                                translation = Offset(nextX, translation.y)
+                                                change.consume()
+                                            }
+                                        }
+                                        2 -> {
+                                            val minY = size.height * (1f - zoom)
+                                            val nextY = (translation.y + delta.y).coerceIn(minY, 0f)
+                                            if (nextY != translation.y) {
+                                                translation = Offset(translation.x, nextY)
+                                                change.consume()
+                                            }
+                                        }
                                     }
                                 }
 
