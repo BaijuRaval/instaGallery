@@ -1114,7 +1114,7 @@ private fun PdfDocumentReader(uri: Uri) {
                     LazyColumn(
                         state = pdfListState,
                         modifier = Modifier.offset { IntOffset(offsetX.roundToInt(), 0) }
-                            .width(documentWidth).fillMaxHeight(),
+                            .requiredWidth(documentWidth).fillMaxHeight(),
                         contentPadding = PaddingValues(bottom = 18.dp)
                     ) {
                         items((0 until pageCount).toList(), key = { it }) { pageIndex ->
