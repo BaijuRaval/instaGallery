@@ -102,8 +102,12 @@ private data class BrowserDocument(
 }
 
 private val supportedDocumentExtensions = setOf(
-    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "csv", "tsv", "rtf",
-    "md", "log", "html", "htm", "xml", "json", "yaml", "yml", "odt", "ods", "odp"
+    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "csv", "tsv", "ssv", "rtf",
+    "md", "markdown", "log", "html", "htm", "xml", "json", "yaml", "yml", "toml", "ini",
+    "properties", "conf", "env", "sql", "java", "kt", "kts", "js", "ts", "jsx", "tsx",
+    "css", "scss", "sass", "less", "sh", "bash", "py", "rb", "php", "c", "h", "cpp",
+    "hpp", "cs", "go", "rs", "swift", "dart", "gradle", "makefile", "srt", "vtt", "tex",
+    "bib", "odt", "ods", "odp"
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1342,7 +1346,13 @@ private fun readDocumentText(context: Context, document: BrowserDocument): Pair<
         ?: throw IllegalStateException("Could not open this file.")
     if (bytes.isEmpty()) return "" to null
     val ext = document.extension
-    if (ext in setOf("txt", "csv", "tsv", "md", "log", "json", "yaml", "yml", "html", "htm", "xml", "rtf")) {
+    if (ext in setOf(
+            "txt", "csv", "tsv", "ssv", "md", "markdown", "log", "json", "yaml", "yml",
+            "toml", "ini", "properties", "conf", "env", "sql", "java", "kt", "kts", "js",
+            "ts", "jsx", "tsx", "css", "scss", "sass", "less", "sh", "bash", "py", "rb",
+            "php", "c", "h", "cpp", "hpp", "cs", "go", "rs", "swift", "dart", "gradle",
+            "makefile", "srt", "vtt", "tex", "bib", "html", "htm", "xml", "rtf"
+        )) {
         var text = String(bytes, StandardCharsets.UTF_8).removePrefix("\uFEFF")
         when (ext) {
             "html", "htm", "xml" -> text = xmlToReadableText(text)
