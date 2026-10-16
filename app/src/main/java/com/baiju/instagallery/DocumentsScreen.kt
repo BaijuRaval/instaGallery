@@ -1299,6 +1299,49 @@ private fun DocumentZoomControls(
 }
 
 @Composable
+private fun SpreadsheetTable(content: String, zoom: Float, onZoomChange: (Float) -> Unit, modifier: Modifier = Modifier) {
+    val sheets = remember(content) {
+        content.split("\n\n").mapNotNull { block ->
+            val lines = block.lines()
+            if (lines.isEmpty()) null else lines.first().trim() to lines.drop(1).map { it.split('\t') }
+        }
+    }
+    Column(modifier.background(Color(0xFF101010))) {
+        Row(Modifier.fillMaxWidth().background(Color(0xFF202020)).padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.End) {
+            Text("Spreadsheet", color = Color.LightGray, fontSize = 12.sp)
+            Spacer(Modifier.width(12.dp))
+            TextButton(onClick = { onZoomChange((zoom / 1.15f).coerceAtLeast(0.6f)) }) { Text("−") }
+            Text("\${(zoom * 100).toInt()}%", color = Color.White, fontSize = 12.sp)
+            TextButton(onClick = { onZoomChange((zoom * 1.15f).coerceAtMost(2.5f)) }) { Text("+") }
+        }
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()).padding(8.dp)) {
+            sheets.forEach { (sheetName, rows) ->
+                Text(sheetName, color = Color(0xFFFF4D7D), fontWeight = FontWeight.Bold, fontSize = 16.sp * zoom,
+                    modifier = Modifier.padding(vertical = 8.dp))
+                rows.forEachIndexed { rowIndex, cells ->
+                    Row {
+                        cells.forEach { value ->
+                            val headerLike = rowIndex == 0
+                            Box(Modifier.widthIn(min = 88.dp)
+                                .width((maxOf(88, (value.length * 8 + 28)).coerceAtMost(320)).dp * zoom)
+                                .border(0.5.dp, Color(0xFF555555))
+                                .background(if (headerLike) Color(0xFF303030) else if (rowIndex % 2 == 0) Color(0xFF191919) else Color(0xFF242424))
+                                .padding(horizontal = 8.dp, vertical = 7.dp)) {
+                                Text(value, color = Color(0xFFEDEDED), fontSize = 13.sp * zoom,
+                                    fontWeight = if (headerLike) FontWeight.SemiBold else FontWeight.Normal,
+                                    maxLines = 4, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+            }
+        }
+    }
+}
+
+@Composable
 private fun TextBasedDocumentReader(document: BrowserDocument) {
     val context = LocalContext.current
     var content by remember(document.uri) { mutableStateOf<String?>(null) }
@@ -1319,6 +1362,9 @@ private fun TextBasedDocumentReader(document: BrowserDocument) {
         loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(color = Color(0xFFFF4D7D))
         }
+        content != null && document.extension in setOf("xls", "xlsx") -> SpreadsheetTable(
+            content = content.orEmpty(), zoom = zoom, onZoomChange = { zoom = it }, modifier = Modifier.fillMaxSize()
+        )
         content != null -> Box(
             Modifier.fillMaxSize().pointerInput(document.uri) {
                 // Observe pinch gestures in the Initial pass so scrolling/selection
@@ -1429,7 +1475,7 @@ private fun readDocumentText(context: Context, document: BrowserDocument): Pair<
                             val values = (0 until (row.lastCellNum.toInt().coerceAtLeast(0))).map { cellIndex ->
                                 formatter.formatCellValue(row.getCell(cellIndex), evaluator)
                             }
-                            if (values.all { it.isBlank() }) null else values.joinToString("    ").trimEnd()
+                            if (values.all { it.isBlank() }) null else values.joinToString("\t").trimEnd()
                         }
                         "Sheet " + (sheetIndex + 1) + "\n" + rows.joinToString("\n")
                     }
@@ -1478,20 +1524,20 @@ private fun spreadsheetText(archive: Map<String, String>): String {
             .findAll(archive[name].orEmpty()).mapNotNull { row ->
                 val cells = Regex("<c\\b([^>]*)>(.*?)</c>", RegexOption.DOT_MATCHES_ALL)
                     .findAll(row.groupValues[1]).mapNotNull { cell ->
-                        val attrs = cell.groupValues[1]
-                        val body = cell.groupValues[2]
-                        val column = Regex("\\br=\"([A-Z]+)\\d+\"").find(attrs)?.groupValues?.get(1)
+                        val attrs = cell.groupValues[1]; val body = cell.groupValues[2]
+                        val ref = Regex("\\br=\"([A-Z]+)\\d+\"").find(attrs)?.groupValues?.get(1)
                         val type = Regex("\\bt=\"([^\"]+)\"").find(attrs)?.groupValues?.get(1)
                         val raw = Regex("<v[^>]*>(.*?)</v>", RegexOption.DOT_MATCHES_ALL).find(body)?.groupValues?.get(1)
-                            ?: if (type == "inlineStr") xmlToReadableText(body) else null
-                        val value = when {
-                            raw == null -> ""
-                            type == "s" -> shared.getOrNull(raw.toIntOrNull() ?: -1).orEmpty()
-                            else -> decodeXml(raw)
-                        }
-                        if (value.isBlank()) null else if (column == null) value else column + ": " + value
+                            ?: if (type == "inlineStr") xmlToReadableText(body) else ""
+                        val value = if (type == "s") shared.getOrNull(raw.toIntOrNull() ?: -1).orEmpty() else decodeXml(raw)
+                        val column = ref?.let { letters -> letters.fold(0) { acc, ch -> acc * 26 + (ch - 'A' + 1) } - 1 } ?: 0
+                        column to value
                     }.toList()
-                cells.takeIf { it.isNotEmpty() }?.joinToString("    ")
+                if (cells.isEmpty()) null else {
+                    val values = MutableList(cells.maxOf { it.first } + 1) { "" }
+                    cells.forEach { (col, value) -> values[col] = value }
+                    values.joinToString("\t")
+                }
             }.toList()
         "Sheet " + (sheetIndex + 1) + "\n" + rows.joinToString("\n")
     }.joinToString("\n\n")
