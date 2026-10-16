@@ -1102,20 +1102,24 @@ private fun PdfDocumentReader(uri: Uri) {
                 }
             }
         ) {
-            // Keep the viewport fixed and enlarge the page canvas itself. There is deliberately
-            // no horizontalScroll here: it competes with two-finger gestures and makes the page
-            // drift sideways instead of zooming. requiredWidth allows the canvas to exceed the
-            // viewport while clipToBounds keeps the visible area stable.
+            // Keep the viewport clipped. The disabled horizontalScroll wrapper supplies
+            // unbounded width constraints to the canvas, but cannot intercept/pan touch gestures.
+            // Pinch and deliberate one-finger horizontal panning are handled by the parent above.
             BoxWithConstraints(Modifier.fillMaxSize().clipToBounds()) {
                 val documentWidth = maxWidth * zoom
-                LazyColumn(
-                    state = pdfListState,
-                    modifier = Modifier.offset { IntOffset(offsetX.roundToInt(), 0) }
-                        .requiredWidth(documentWidth).fillMaxHeight(),
-                    contentPadding = PaddingValues(bottom = 18.dp)
+                Row(
+                    Modifier.fillMaxSize().horizontalScroll(rememberScrollState(), enabled = false),
+                    horizontalArrangement = Arrangement.Start
                 ) {
-                    items((0 until pageCount).toList(), key = { it }) { pageIndex ->
-                        PdfPageContent(uri = uri, pageIndex = pageIndex)
+                    LazyColumn(
+                        state = pdfListState,
+                        modifier = Modifier.offset { IntOffset(offsetX.roundToInt(), 0) }
+                            .width(documentWidth).fillMaxHeight(),
+                        contentPadding = PaddingValues(bottom = 18.dp)
+                    ) {
+                        items((0 until pageCount).toList(), key = { it }) { pageIndex ->
+                            PdfPageContent(uri = uri, pageIndex = pageIndex)
+                        }
                     }
                 }
             }
