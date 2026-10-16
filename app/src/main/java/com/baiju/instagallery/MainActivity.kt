@@ -2006,8 +2006,16 @@ private fun MediaThumbnail(
         }
     }
     Box(Modifier.aspectRatio(0.78f).background(if (selected) Color(0xFF503040) else Color.DarkGray)) {
-        AsyncImage(model = request,
-            imageLoader = imageLoader, contentDescription = item.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        if (item.isAudio) {
+            Column(Modifier.fillMaxSize().background(Color(0xFF21151D)), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                Icon(Icons.Default.MusicNote, "Audio", tint = Color(0xFFFF4D7D), modifier = Modifier.size(42.dp))
+                Text(item.name, color = Color.White, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp))
+            }
+        } else {
+            AsyncImage(model = request,
+                imageLoader = imageLoader, contentDescription = item.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        }
         if (item.isVideo) Icon(Icons.Default.PlayArrow, "Video", tint = Color.White, modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(24.dp))
         if (selected) Box(Modifier.fillMaxSize().background(Color(0x6633A6FF)), contentAlignment = Alignment.TopEnd) {
             Text("✓", color = Color.White, fontSize = 22.sp, modifier = Modifier.padding(5.dp))
