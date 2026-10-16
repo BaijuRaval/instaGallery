@@ -381,6 +381,10 @@ private fun scanDocuments(context: Context): Pair<List<BrowserDocument>, String?
             pathColumn
         )
         val files = mutableListOf<BrowserDocument>()
+        // Build the folder tree from every indexed file, not only supported documents.
+        // This keeps Doc > Folder visible like Media > Folder even when a directory
+        // contains photos, videos, archives, or other non-document files as well.
+        val folderPaths = linkedSetOf<String>()
         val collection = MediaStore.Files.getContentUri("external")
         context.contentResolver.query(collection, projection, null, null, MediaStore.MediaColumns.DISPLAY_NAME + " ASC")?.use { cursor ->
             val idIndex = cursor.getColumnIndex(MediaStore.Files.FileColumns._ID)
@@ -394,13 +398,20 @@ private fun scanDocuments(context: Context): Pair<List<BrowserDocument>, String?
             }
             while (cursor.moveToNext()) {
                 val name = cursor.getString(nameIndex) ?: continue
-                val extension = name.substringAfterLast('.', "").lowercase()
-                if (extension !in supportedDocumentExtensions) continue
                 val rawPath = if (cursor.isNull(pathIndex)) "" else cursor.getString(pathIndex).orEmpty()
                 val relativePath = normalizeDocumentPath(
                     context,
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) rawPath else rawPath.substringBeforeLast('/')
                 )
+                val segments = relativePath.split('/').filter { it.isNotBlank() }
+                var folderPath = ""
+                segments.forEach { segment ->
+                    folderPath = if (folderPath.isBlank()) segment else "$folderPath/$segment"
+                    folderPaths.add(folderPath)
+                }
+
+                val extension = name.substringAfterLast('.', "").lowercase()
+                if (extension !in supportedDocumentExtensions) continue
                 val id = cursor.getLong(idIndex)
                 files.add(
                     BrowserDocument(
@@ -416,22 +427,16 @@ private fun scanDocuments(context: Context): Pair<List<BrowserDocument>, String?
                 )
             }
         } ?: return emptyList<BrowserDocument>() to "Android could not scan the device's shared storage."
-        val folders = linkedMapOf<String, BrowserDocument>()
-        files.forEach { file ->
-            val segments = file.relativePath.split('/').filter { it.isNotBlank() }
-            var path = ""
-            segments.forEach { segment ->
-                path = if (path.isBlank()) segment else "$path/$segment"
-                folders[path] = BrowserDocument(
-                    uri = Uri.parse("instagallery-folder:" + Uri.encode(path)),
-                    name = segment,
-                    mimeType = "inode/directory",
-                    relativePath = path,
-                    size = 0L,
-                    modified = 0L,
-                    isDirectory = true
-                )
-            }
+        val folders = folderPaths.associateWithTo(linkedMapOf()) { path ->
+            BrowserDocument(
+                uri = Uri.parse("instagallery-folder:" + Uri.encode(path)),
+                name = path.substringAfterLast('/'),
+                mimeType = "inode/directory",
+                relativePath = path,
+                size = 0L,
+                modified = 0L,
+                isDirectory = true
+            )
         }
         (folders.values.toList() + files) to null
     } catch (e: SecurityException) {
