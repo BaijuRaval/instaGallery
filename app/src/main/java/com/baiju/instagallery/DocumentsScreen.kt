@@ -1009,6 +1009,7 @@ private fun PdfDocumentReader(uri: Uri) {
     var zoom by remember(uri) { mutableFloatStateOf(1f) }
     val pdfListState = rememberLazyListState()
     val pdfHorizontalScrollState = rememberScrollState()
+    val gestureScope = rememberCoroutineScope()
 
     LaunchedEffect(uri) {
         loading = true
@@ -1069,7 +1070,7 @@ private fun PdfDocumentReader(uri: Uri) {
                             previousDistance = 0f
                         }
                     }
-                    if (pinching) pdfHorizontalScrollState.scrollTo(0)
+                    if (pinching) gestureScope.launch { pdfHorizontalScrollState.scrollTo(0) }
                 }
             }
         ) {
