@@ -628,7 +628,7 @@ private fun GalleryApp() {
             media = loadedMedia
         }
     }
-    val visible = remember(media, selectedAlbum, hiddenFolders, tab) {
+    val visible = remember(media, selectedAlbum, hiddenFolders, tab, menuContent) {
         (if (selectedAlbum == "All media") media else media.filter { it.album == selectedAlbum })
             .filter { it.album !in hiddenFolders }
             .filter { item -> when { menuContent == "Audio" -> item.isAudio; tab == "Images" -> !item.isVideo && !item.isAudio; tab == "Videos" -> item.isVideo; else -> !item.isAudio } }
@@ -669,7 +669,7 @@ private fun GalleryApp() {
 
     // Always prioritize what the user is looking at now. Opening a folder cancels/reorders this
     // background queue so its thumbnails are generated before unrelated gallery items.
-    LaunchedEffect(media, tab, selectedAlbum, hiddenFolders) {
+    LaunchedEffect(media, tab, selectedAlbum, hiddenFolders, menuContent) {
         if (media.isEmpty()) return@LaunchedEffect
         val prioritized = when {
             tab == "Folders" && selectedAlbum != "All media" -> visible
@@ -1028,7 +1028,7 @@ private fun GalleryApp() {
                 ) { galleryTarget ->
                     val gridTab = galleryTarget.first
                     val gridAlbum = galleryTarget.second
-                    val animatedVisible = remember(media, hiddenFolders, gridAlbum, gridTab) {
+                    val animatedVisible = remember(media, hiddenFolders, gridAlbum, gridTab, menuContent) {
                         (if (gridAlbum == "All media") media else media.filter { it.album == gridAlbum })
                             .filter { it.album !in hiddenFolders }
                             .filter { item -> when { menuContent == "Audio" -> item.isAudio; gridTab == "Images" -> !item.isVideo && !item.isAudio; gridTab == "Videos" -> item.isVideo; else -> !item.isAudio } }
