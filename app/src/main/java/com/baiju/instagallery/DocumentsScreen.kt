@@ -181,7 +181,7 @@ internal fun DocumentsScreen(
     fun directoryForRelativePath(path: String): File {
         if (path.isBlank()) return storageRoot
         val descendant = documents.firstOrNull {
-            !it.isDirectory && (it.relativePath == path || it.relativePath.startsWith("$"+"{path}/"))
+            !it.isDirectory && (it.relativePath == path || it.relativePath.startsWith("${path}/"))
         } ?: return File(storageRoot, path)
         var folder = fileForDocument(descendant).parentFile
         var cursor = descendant.relativePath
@@ -242,10 +242,10 @@ internal fun DocumentsScreen(
                                 var target = File(destination, source.name)
                                 if (target.exists()) {
                                     val base = source.name.substringBeforeLast('.', source.name)
-                                    val extension = source.name.substringAfterLast('.', "").let { if (it.isBlank()) "" else ".$"+"{it}" }
+                                    val extension = source.name.substringAfterLast('.', "").let { if (it.isBlank()) "" else ".${it}" }
                                     var copyIndex = 1
                                     do {
-                                        target = File(destination, "$"+"{base} (copy $copyIndex)$"+"{extension}")
+                                        target = File(destination, "${base} (copy $copyIndex)${extension}")
                                         copyIndex++
                                     } while (target.exists() && copyIndex < 10000)
                                 }
@@ -271,11 +271,11 @@ internal fun DocumentsScreen(
             selectedUris = emptySet()
             scanRevision++
             statusMessage = buildString {
-                append("$"+"{mode} completed for $"+"{outcome.first} of $"+"{targets.size} document(s).")
+                append("${mode} completed for ${outcome.first} of ${targets.size} document(s).")
                 if (outcome.second.isNotEmpty()) {
                     append("\n\n")
                     append(outcome.second.take(4).joinToString("\n"))
-                    if (outcome.second.size > 4) append("\nAnd $"+"{outcome.second.size - 4} more issue(s).")
+                    if (outcome.second.size > 4) append("\nAnd ${outcome.second.size - 4} more issue(s).")
                 }
             }
         }
@@ -325,12 +325,12 @@ internal fun DocumentsScreen(
                     try {
                         val source = fileForDocument(document)
                         val extension = source.name.substringAfterLast('.', "").let {
-                            if (source.name.lastIndexOf('.') > 0 && it.isNotBlank()) ".$"+"{it}" else ""
+                            if (source.name.lastIndexOf('.') > 0 && it.isNotBlank()) ".${it}" else ""
                         }
                         val requestedName = if (targets.size == 1) {
                             if (extension.isNotBlank() && baseName.endsWith(extension, ignoreCase = true)) baseName
                             else baseName + extension
-                        } else "$"+"{baseName} ($"+"{index + 1})$"+"{extension}"
+                        } else "${baseName} (${index + 1})${extension}"
                         val destination = File(source.parentFile ?: storageRoot, requestedName)
                         when {
                             !source.isFile -> errors.add(source.name + ": file not found.")
@@ -347,11 +347,11 @@ internal fun DocumentsScreen(
             selectedUris = emptySet()
             scanRevision++
             statusMessage = buildString {
-                append("Renamed $"+"{outcome.first} of $"+"{targets.size} document(s).")
+                append("Renamed ${outcome.first} of ${targets.size} document(s).")
                 if (outcome.second.isNotEmpty()) {
                     append("\n\n")
                     append(outcome.second.take(4).joinToString("\n"))
-                    if (outcome.second.size > 4) append("\nAnd $"+"{outcome.second.size - 4} more issue(s).")
+                    if (outcome.second.size > 4) append("\nAnd ${outcome.second.size - 4} more issue(s).")
                 }
             }
         }
@@ -413,7 +413,7 @@ internal fun DocumentsScreen(
                         modifier = Modifier.weight(1f)
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("$"+"{selectedUris.size}/$"+"{selectableDocuments.size}", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            Text("${selectedUris.size}/${selectableDocuments.size}", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
                             Text(if (allVisibleSelected) "Deselect all" else "Select all", fontSize = 12.sp, color = Color.LightGray)
                         }
                     }
@@ -425,7 +425,7 @@ internal fun DocumentsScreen(
                     Column(Modifier.weight(1f)) {
                         Text(selectedFolderPath!!.substringAfterLast('/'), fontSize = 22.sp, fontWeight = FontWeight.Bold,
                             color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        val count = documents.count { !it.isDirectory && (it.relativePath == selectedFolderPath || it.relativePath.startsWith("$"+"{selectedFolderPath}/")) }
+                        val count = documents.count { !it.isDirectory && (it.relativePath == selectedFolderPath || it.relativePath.startsWith("${selectedFolderPath}/")) }
                         Text("Folder selected • $count documents", color = Color.LightGray, fontSize = 12.sp)
                     }
                 }
@@ -438,9 +438,9 @@ internal fun DocumentsScreen(
                 },
                 subtitle = when {
                     !hasAccess -> "Automatic document scan"
-                    viewMode == "folders" && currentFolder.isNotBlank() -> "$"+"{currentFiles.size} documents in folder"
-                    viewMode == "folders" -> "$"+"{childFolders.size} folders"
-                    else -> "$"+"{allFiles.size} documents"
+                    viewMode == "folders" && currentFolder.isNotBlank() -> "${currentFiles.size} documents in folder"
+                    viewMode == "folders" -> "${childFolders.size} folders"
+                    else -> "${allFiles.size} documents"
                 },
                 onOpenMenu = onOpenMenu
             )
@@ -605,19 +605,19 @@ internal fun DocumentsScreen(
                 if (selectedFolderPath != null) {
                     val folder = selectedFolderPath!!
                     Text("Name: " + folder.substringAfterLast('/'))
-                    Text("Documents: " + documents.count { !it.isDirectory && (it.relativePath == folder || it.relativePath.startsWith("$"+"{folder}/")) })
+                    Text("Documents: " + documents.count { !it.isDirectory && (it.relativePath == folder || it.relativePath.startsWith("${folder}/")) })
                     Text("Location: $folder")
                 } else if (selectedDocuments.size == 1) {
                     val doc = selectedDocuments.first()
-                    Text("Name: $"+"{doc.name}")
-                    Text("Type: $"+"{doc.mimeType}")
+                    Text("Name: ${doc.name}")
+                    Text("Type: ${doc.mimeType}")
                     Text("Folder: " + doc.relativePath.ifBlank { "Internal storage" })
-                    Text("Size: $"+"{doc.size / 1024} KB")
+                    Text("Size: ${doc.size / 1024} KB")
                     Text("Modified: " + if (doc.modified > 0) DateFormat.getDateTimeInstance().format(Date(doc.modified * 1000)) else "Unknown")
-                    Text("Location: $"+"{doc.displayPath}", fontSize = 11.sp)
+                    Text("Location: ${doc.displayPath}", fontSize = 11.sp)
                 } else {
-                    Text("Documents: $"+"{selectedDocuments.size}")
-                    Text("Total size: $"+"{selectedDocuments.sumOf { it.size } / 1024} KB")
+                    Text("Documents: ${selectedDocuments.size}")
+                    Text("Total size: ${selectedDocuments.sumOf { it.size } / 1024} KB")
                     Text("Selected files remain on your device until you choose an action.")
                 }
             }
@@ -627,7 +627,7 @@ internal fun DocumentsScreen(
 
     if (showRename) AlertDialog(
         onDismissRequest = { showRename = false },
-        title = { Text(if (renameFolderMode) "Rename folder" else if (selectedDocuments.size > 1) "Rename $"+"{selectedDocuments.size} documents" else "Rename document") },
+        title = { Text(if (renameFolderMode) "Rename folder" else if (selectedDocuments.size > 1) "Rename ${selectedDocuments.size} documents" else "Rename document") },
         text = {
             OutlinedTextField(value = renameText, onValueChange = { renameText = it }, singleLine = true,
                 label = { Text(if (selectedDocuments.size > 1 && !renameFolderMode) "Base name (numbered suffixes added)" else "Name") })
@@ -640,7 +640,7 @@ internal fun DocumentsScreen(
         val destinations = listOf("") + documents.filter { it.isDirectory }.map { it.relativePath }.distinct().sorted()
         AlertDialog(
             onDismissRequest = { if (!isActionRunning) transferMode = null },
-            title = { Text("$"+"{mode} documents to") },
+            title = { Text("${mode} documents to") },
             text = {
                 if (isActionRunning) CircularProgressIndicator(color = Color(0xFFFF4D7D))
                 else Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
