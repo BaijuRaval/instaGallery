@@ -941,7 +941,7 @@ private fun BuiltInDocumentReader(document: BrowserDocument, onBack: () -> Unit)
     val context = LocalContext.current
     // Formats supported by the built-in text extractor stay in-app so pinch-to-zoom works.
     // Legacy binary Office formats still require a compatible external viewer.
-    val originalViewerExtensions = setOf("ppt")
+    val originalViewerExtensions = emptySet<String>()
     val requiresOriginalViewer = document.extension in originalViewerExtensions
     var openError by remember(document.uri) { mutableStateOf<String?>(null) }
 
