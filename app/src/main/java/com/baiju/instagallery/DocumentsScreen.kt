@@ -1499,7 +1499,17 @@ private fun readDocumentText(context: Context, document: BrowserDocument): Pair<
             null to "Could not read this legacy Excel .xls file: " + (e.message ?: "unsupported or damaged file")
         }
     }
-    if (ext == "ppt") return null to "This older binary PowerPoint format is not supported by the built-in reader yet."
+    if (ext == "ppt") {
+        return try {
+            val text = ByteArrayInputStream(bytes).use { input ->
+                org.apache.poi.hslf.extractor.PowerPointExtractor(input).use { extractor -> extractor.text }
+            }
+            if (text.isBlank()) null to "No readable text was found in this PowerPoint presentation."
+            else text to null
+        } catch (e: Exception) {
+            null to "Could not read this legacy PowerPoint .ppt file: " + (e.message ?: "unsupported or damaged file")
+        }
+    }
     return null to "This file format is not supported by the built-in reader yet."
 }
 
