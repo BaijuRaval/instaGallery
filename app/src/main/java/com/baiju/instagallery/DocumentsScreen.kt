@@ -1307,14 +1307,6 @@ private fun SpreadsheetTable(content: String, zoom: Float, onZoomChange: (Float)
         }
     }
     Column(modifier.background(Color(0xFF101010))) {
-        Row(Modifier.fillMaxWidth().background(Color(0xFF202020)).padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.End) {
-            Text("Spreadsheet", color = Color.LightGray, fontSize = 12.sp)
-            Spacer(Modifier.width(12.dp))
-            TextButton(onClick = { onZoomChange((zoom / 1.15f).coerceAtLeast(0.6f)) }) { Text("−") }
-            Text("\${(zoom * 100).toInt()}%", color = Color.White, fontSize = 12.sp)
-            TextButton(onClick = { onZoomChange((zoom * 1.15f).coerceAtMost(2.5f)) }) { Text("+") }
-        }
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()).padding(8.dp)) {
             sheets.forEach { (sheetName, rows) ->
                 Text(sheetName, color = Color(0xFFFF4D7D), fontWeight = FontWeight.Bold, fontSize = 16.sp * zoom,
@@ -1363,7 +1355,28 @@ private fun TextBasedDocumentReader(document: BrowserDocument) {
             CircularProgressIndicator(color = Color(0xFFFF4D7D))
         }
         content != null && document.extension in setOf("xls", "xlsx") -> SpreadsheetTable(
-            content = content.orEmpty(), zoom = zoom, onZoomChange = { zoom = it }, modifier = Modifier.fillMaxSize()
+            content = content.orEmpty(),
+            zoom = zoom,
+            onZoomChange = { zoom = it },
+            modifier = Modifier.fillMaxSize().pointerInput(document.uri) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    var previousDistance = 0f
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val pointers = event.changes.filter { it.pressed }
+                        if (pointers.isEmpty()) break
+                        if (pointers.size >= 2) {
+                            val distance = (pointers[0].position - pointers[1].position).getDistance()
+                            if (previousDistance > 1f && distance > 1f) {
+                                zoom = (zoom * (distance / previousDistance)).coerceIn(0.5f, 3f)
+                            }
+                            previousDistance = distance
+                            event.changes.forEach { if (it.pressed) it.consume() }
+                        } else previousDistance = 0f
+                    }
+                }
+            }
         )
         content != null -> Box(
             Modifier.fillMaxSize().pointerInput(document.uri) {
