@@ -1313,8 +1313,29 @@ private fun TextBasedDocumentReader(document: BrowserDocument) {
         }
         content != null -> Box(
             Modifier.fillMaxSize().pointerInput(document.uri) {
-                detectTransformGestures { _, _, zoomChange, _ ->
-                    zoom = (zoom * zoomChange).coerceIn(0.5f, 4f)
+                // Observe pinch gestures in the Initial pass so scrolling/selection
+                // handlers inside the document cannot consume them first.
+                awaitEachGesture {
+                    awaitFirstDown(
+                        requireUnconsumed = false,
+                        pass = PointerEventPass.Initial
+                    )
+                    var previousDistance = 0f
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val pointers = event.changes.filter { it.pressed }
+                        if (pointers.isEmpty()) break
+                        if (pointers.size >= 2) {
+                            val distance = (pointers[0].position - pointers[1].position).getDistance()
+                            if (previousDistance > 1f && distance > 1f) {
+                                zoom = (zoom * (distance / previousDistance)).coerceIn(0.5f, 4f)
+                            }
+                            previousDistance = distance
+                            event.changes.forEach { if (it.pressed) it.consume() }
+                        } else {
+                            previousDistance = 0f
+                        }
+                    }
                 }
             }
         ) {
