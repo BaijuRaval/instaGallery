@@ -928,9 +928,9 @@ private fun normalizeDocumentPath(context: Context, rawPath: String): String {
 @Composable
 private fun BuiltInDocumentReader(document: BrowserDocument, onBack: () -> Unit) {
     val context = LocalContext.current
-    val originalViewerExtensions = setOf(
-        "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "rtf", "html", "htm"
-    )
+    // Formats supported by the built-in text extractor stay in-app so pinch-to-zoom works.
+    // Legacy binary Office formats still require a compatible external viewer.
+    val originalViewerExtensions = setOf("doc", "xls", "ppt")
     val requiresOriginalViewer = document.extension in originalViewerExtensions
     var openError by remember(document.uri) { mutableStateOf<String?>(null) }
 
@@ -1306,7 +1306,13 @@ private fun TextBasedDocumentReader(document: BrowserDocument) {
         loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(color = Color(0xFFFF4D7D))
         }
-        content != null -> Box(Modifier.fillMaxSize()) {
+        content != null -> Box(
+            Modifier.fillMaxSize().pointerInput(document.uri) {
+                detectTransformGestures { _, _, zoomChange, _ ->
+                    zoom = (zoom * zoomChange).coerceIn(0.5f, 4f)
+                }
+            }
+        ) {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp)) {
                 Text(
                     content.orEmpty(),
@@ -1315,11 +1321,6 @@ private fun TextBasedDocumentReader(document: BrowserDocument) {
                     lineHeight = 21.sp * zoom
                 )
             }
-            DocumentZoomControls(
-                zoom = zoom,
-                onZoomChange = { zoom = it.coerceIn(0.5f, 4f) },
-                modifier = Modifier.align(Alignment.BottomEnd).padding(14.dp)
-            )
         }
         else -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
