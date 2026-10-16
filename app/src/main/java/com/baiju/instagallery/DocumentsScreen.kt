@@ -172,7 +172,9 @@ internal fun DocumentsScreen(
         }
     }
 
-    val allFiles = documents.filter { !it.isDirectory }.sortedBy { it.displayPath.lowercase() }
+    // In "all" view, show the most recently modified documents first.
+    val allFiles = documents.filter { !it.isDirectory }
+        .sortedWith(compareByDescending<BrowserDocument> { it.modified }.thenBy { it.displayPath.lowercase() })
     val childFolders = documents.filter {
         it.isDirectory && it.relativePath.substringBeforeLast('/', "") == currentFolder
     }.sortedBy { it.name.lowercase() }
