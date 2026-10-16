@@ -1007,8 +1007,6 @@ private fun PdfDocumentReader(uri: Uri) {
     var loading by remember(uri) { mutableStateOf(true) }
     var error by remember(uri) { mutableStateOf<String?>(null) }
     var zoom by remember(uri) { mutableFloatStateOf(1f) }
-    val latestZoom = rememberUpdatedState(zoom)
-    val latestZoomChange = rememberUpdatedState<(Float) -> Unit>({ newZoom -> zoom = newZoom })
     val pdfListState = rememberLazyListState()
     val pdfHorizontalScrollState = rememberScrollState()
 
@@ -1042,31 +1040,8 @@ private fun PdfDocumentReader(uri: Uri) {
         }
         else -> Box(
             Modifier.fillMaxSize().pointerInput(Unit) {
-                awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
-                    var previousDistance = 0f
-                    var gestureZoom = latestZoom.value
-                    while (true) {
-                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                        val pointers = event.changes.filter { it.pressed }
-                        if (pointers.isEmpty()) break
-                        if (pointers.size >= 2) {
-                            val first = pointers[0]
-                            val second = pointers[1]
-                            val distance = (first.position - second.position).getDistance()
-                            if (previousDistance > 0.5f && distance > 0.5f) {
-                                val ratio = distance / previousDistance
-                                if (kotlin.math.abs(ratio - 1f) > 0.001f) {
-                                    gestureZoom = (gestureZoom * ratio).coerceIn(0.5f, 4f)
-                                    latestZoomChange.value(gestureZoom)
-                                }
-                            }
-                            previousDistance = distance
-                            pointers.forEach { it.consume() }
-                        } else {
-                            previousDistance = 0f
-                        }
-                    }
+                detectTransformGestures { _, _, zoomChange, _ ->
+                    zoom = (zoom * zoomChange).coerceIn(0.5f, 4f)
                 }
             }
         ) {
