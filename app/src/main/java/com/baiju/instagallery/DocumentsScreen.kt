@@ -1502,7 +1502,15 @@ private fun readDocumentText(context: Context, document: BrowserDocument): Pair<
     if (ext == "ppt") {
         return try {
             val text = ByteArrayInputStream(bytes).use { input ->
-                org.apache.poi.hslf.extractor.PowerPointExtractor(input).use { extractor -> extractor.text }
+                org.apache.poi.hslf.usermodel.HSLFSlideShow(input).use { slideshow ->
+                    slideshow.slides.mapIndexed { index, slide ->
+                        val slideText = slide.shapes
+                            .filterIsInstance<org.apache.poi.hslf.usermodel.HSLFTextShape>()
+                            .mapNotNull { it.text?.takeIf(String::isNotBlank) }
+                            .joinToString("\n")
+                        "Slide ${index + 1}\n${slideText}"
+                    }.joinToString("\n\n")
+                }
             }
             if (text.isBlank()) null to "No readable text was found in this PowerPoint presentation."
             else text to null
