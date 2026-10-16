@@ -1010,6 +1010,12 @@ private fun PdfDocumentReader(uri: Uri) {
     val pdfListState = rememberLazyListState()
     val pdfHorizontalScrollState = rememberScrollState()
 
+    // Changing zoom must not retain an out-of-range horizontal offset, which
+    // makes the whole page appear to jump off the right edge.
+    LaunchedEffect(zoom) {
+        pdfHorizontalScrollState.scrollTo(0)
+    }
+
     LaunchedEffect(uri) {
         loading = true
         val result = withContext(Dispatchers.IO) {
