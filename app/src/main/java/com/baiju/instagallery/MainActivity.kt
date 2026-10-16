@@ -954,7 +954,7 @@ private fun GalleryApp() {
                         }
                         totalHorizontalDrag = 0f
                     }
-                }
+                )
             }) {
                 AnimatedContent(
                     targetState = when {
