@@ -60,6 +60,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -1008,6 +1010,7 @@ private fun PdfDocumentReader(uri: Uri) {
     var loading by remember(uri) { mutableStateOf(true) }
     var error by remember(uri) { mutableStateOf<String?>(null) }
     var zoom by remember(uri) { mutableFloatStateOf(1f) }
+    var offsetX by remember(uri) { mutableFloatStateOf(0f) }
     val pdfListState = rememberLazyListState()
 
     LaunchedEffect(uri) {
@@ -1041,31 +1044,59 @@ private fun PdfDocumentReader(uri: Uri) {
         else -> Box(
             Modifier.fillMaxSize().pointerInput(Unit) {
                 awaitEachGesture {
-                    awaitFirstDown(
+                    val down = awaitFirstDown(
                         requireUnconsumed = false,
                         pass = PointerEventPass.Initial
                     )
                     var previousDistance = 0f
+                    var previousSingleX = down.position.x
+                    var previousSingleY = down.position.y
+                    var isPanning = false
                     var didPinch = false
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
                         val pointers = event.changes.filter { it.pressed }
                         if (pointers.isEmpty()) break
                         if (pointers.size >= 2) {
-                            if (!didPinch) didPinch = true
-                            val distance = (pointers[0].position - pointers[1].position).getDistance()
+                            didPinch = true
+                            val first = pointers[0].position
+                            val second = pointers[1].position
+                            val distance = (first - second).getDistance()
+                            val pivotX = (first.x + second.x) / 2f
                             if (previousDistance > 1f && distance > 1f) {
-                                val factor = distance / previousDistance
-                                if (kotlin.math.abs(factor - 1f) > 0.001f) {
-                                    zoom = (zoom * factor).coerceIn(0.5f, 4f)
+                                val oldZoom = zoom
+                                val newZoom = (oldZoom * distance / previousDistance).coerceIn(0.5f, 4f)
+                                if (kotlin.math.abs(newZoom - oldZoom) > 0.001f) {
+                                    // Keep the content beneath the fingers anchored while zooming.
+                                    val anchoredOffset = pivotX - (pivotX - offsetX) * (newZoom / oldZoom)
+                                    zoom = newZoom
+                                    val minOffset = (size.width.toFloat() * (1f - newZoom)).coerceAtMost(0f)
+                                    offsetX = anchoredOffset.coerceIn(minOffset, 0f)
                                 }
                             }
                             previousDistance = distance
-                            // Consume every current pointer change so nested scroll cannot pan
-                            // the document while a pinch is in progress.
+                            // A pinch must never be interpreted as a horizontal drag by the page list.
                             event.changes.forEach { it.consume() }
                         } else {
                             previousDistance = 0f
+                            val change = pointers.first()
+                            val dx = change.position.x - previousSingleX
+                            val dy = change.position.y - previousSingleY
+                            val totalX = change.position.x - down.position.x
+                            val totalY = change.position.y - down.position.y
+                            if (!didPinch && zoom > 1.001f) {
+                                if (!isPanning &&
+                                    kotlin.math.abs(totalX) > viewConfiguration.touchSlop &&
+                                    kotlin.math.abs(totalX) > kotlin.math.abs(totalY) * 1.2f
+                                ) isPanning = true
+                                if (isPanning) {
+                                    val minOffset = (size.width.toFloat() * (1f - zoom)).coerceAtMost(0f)
+                                    offsetX = (offsetX + dx).coerceIn(minOffset, 0f)
+                                    change.consume()
+                                }
+                            }
+                            previousSingleX = change.position.x
+                            previousSingleY = change.position.y
                         }
                     }
                 }
@@ -1079,7 +1110,8 @@ private fun PdfDocumentReader(uri: Uri) {
                 val documentWidth = maxWidth * zoom
                 LazyColumn(
                     state = pdfListState,
-                    modifier = Modifier.requiredWidth(documentWidth).fillMaxHeight(),
+                    modifier = Modifier.offset { IntOffset(offsetX.roundToInt(), 0) }
+                        .requiredWidth(documentWidth).fillMaxHeight(),
                     contentPadding = PaddingValues(bottom = 18.dp)
                 ) {
                     items((0 until pageCount).toList(), key = { it }) { pageIndex ->
