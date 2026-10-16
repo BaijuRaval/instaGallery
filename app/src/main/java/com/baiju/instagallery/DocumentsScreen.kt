@@ -59,6 +59,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -1007,10 +1008,7 @@ private fun PdfDocumentReader(uri: Uri) {
     var loading by remember(uri) { mutableStateOf(true) }
     var error by remember(uri) { mutableStateOf<String?>(null) }
     var zoom by remember(uri) { mutableFloatStateOf(1f) }
-    var isPinching by remember(uri) { mutableStateOf(false) }
     val pdfListState = rememberLazyListState()
-    val pdfHorizontalScrollState = rememberScrollState()
-    val gestureScope = rememberCoroutineScope()
 
     LaunchedEffect(uri) {
         loading = true
@@ -1054,11 +1052,7 @@ private fun PdfDocumentReader(uri: Uri) {
                         val pointers = event.changes.filter { it.pressed }
                         if (pointers.isEmpty()) break
                         if (pointers.size >= 2) {
-                            if (!didPinch) {
-                                didPinch = true
-                                isPinching = true
-                                gestureScope.launch { pdfHorizontalScrollState.scrollTo(0) }
-                            }
+                            if (!didPinch) didPinch = true
                             val distance = (pointers[0].position - pointers[1].position).getDistance()
                             if (previousDistance > 1f && distance > 1f) {
                                 val factor = distance / previousDistance
@@ -1074,29 +1068,22 @@ private fun PdfDocumentReader(uri: Uri) {
                             previousDistance = 0f
                         }
                     }
-                    if (didPinch) {
-                        isPinching = false
-                        gestureScope.launch { pdfHorizontalScrollState.scrollTo(0) }
-                    }
                 }
             }
         ) {
-            // One horizontally scrollable canvas wraps the entire vertical page list.
-            // Zoom and horizontal panning are therefore shared by every page, not per-page.
-            BoxWithConstraints(Modifier.fillMaxSize()) {
+            // Keep the viewport fixed and enlarge the page canvas itself. There is deliberately
+            // no horizontalScroll here: it competes with two-finger gestures and makes the page
+            // drift sideways instead of zooming. requiredWidth allows the canvas to exceed the
+            // viewport while clipToBounds keeps the visible area stable.
+            BoxWithConstraints(Modifier.fillMaxSize().clipToBounds()) {
                 val documentWidth = maxWidth * zoom
-                Row(
-                    Modifier.fillMaxSize().horizontalScroll(pdfHorizontalScrollState, enabled = !isPinching),
-                    horizontalArrangement = Arrangement.Start
+                LazyColumn(
+                    state = pdfListState,
+                    modifier = Modifier.requiredWidth(documentWidth).fillMaxHeight(),
+                    contentPadding = PaddingValues(bottom = 18.dp)
                 ) {
-                    LazyColumn(
-                        state = pdfListState,
-                        modifier = Modifier.width(documentWidth).fillMaxHeight(),
-                        contentPadding = PaddingValues(bottom = 18.dp)
-                    ) {
-                        items((0 until pageCount).toList(), key = { it }) { pageIndex ->
-                            PdfPageContent(uri = uri, pageIndex = pageIndex)
-                        }
+                    items((0 until pageCount).toList(), key = { it }) { pageIndex ->
+                        PdfPageContent(uri = uri, pageIndex = pageIndex)
                     }
                 }
             }
