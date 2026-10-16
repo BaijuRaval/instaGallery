@@ -26,7 +26,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -1011,12 +1010,6 @@ private fun PdfDocumentReader(uri: Uri) {
     val pdfListState = rememberLazyListState()
     val pdfHorizontalScrollState = rememberScrollState()
 
-    // Changing zoom must not retain an out-of-range horizontal offset, which
-    // makes the whole page appear to jump off the right edge.
-    LaunchedEffect(zoom) {
-        pdfHorizontalScrollState.scrollTo(0)
-    }
-
     LaunchedEffect(uri) {
         loading = true
         val result = withContext(Dispatchers.IO) {
@@ -1047,8 +1040,36 @@ private fun PdfDocumentReader(uri: Uri) {
         }
         else -> Box(
             Modifier.fillMaxSize().pointerInput(Unit) {
-                detectTransformGestures { _, _, zoomChange, _ ->
-                    zoom = (zoom * zoomChange).coerceIn(0.5f, 4f)
+                awaitEachGesture {
+                    awaitFirstDown(
+                        requireUnconsumed = false,
+                        pass = PointerEventPass.Initial
+                    )
+                    var previousDistance = 0f
+                    var pinching = false
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val pointers = event.changes.filter { it.pressed }
+                        if (pointers.isEmpty()) break
+                        if (pointers.size >= 2) {
+                            val first = pointers[0]
+                            val second = pointers[1]
+                            val distance = (first.position - second.position).getDistance()
+                            if (previousDistance > 1f && distance > 1f) {
+                                val factor = distance / previousDistance
+                                if (kotlin.math.abs(factor - 1f) > 0.002f) {
+                                    zoom = (zoom * factor).coerceIn(0.5f, 4f)
+                                    pinching = true
+                                }
+                            }
+                            previousDistance = distance
+                            // Read pinch events before nested scrolling can consume them.
+                            pointers.forEach { it.consume() }
+                        } else {
+                            previousDistance = 0f
+                        }
+                    }
+                    if (pinching) pdfHorizontalScrollState.scrollTo(0)
                 }
             }
         ) {
