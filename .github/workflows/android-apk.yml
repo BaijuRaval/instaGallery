@@ -26,8 +26,19 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Restore stable debug signing key when repository secret is configured
+        env:
+          ANDROID_DEBUG_KEYSTORE_BASE64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$ANDROID_DEBUG_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_DEBUG_KEYSTORE_BASE64" | base64 --decode > app/ci-debug.keystore
+            echo "Stable CI debug signing key restored."
+          else
+            echo "::warning::ANDROID_DEBUG_KEYSTORE_BASE64 is missing; this APK uses a temporary runner key and requires a one-time reinstall when signing changes."
+          fi
+
       - name: Build debug APK
-        run: gradle --no-daemon assembleDebug
+        run: gradle --no-daemon -PciVersionCode=${{ github.run_number }} assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

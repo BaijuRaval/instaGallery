@@ -25,6 +25,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
@@ -40,6 +42,7 @@ import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.Slideshow
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,6 +54,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.zIndex
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowInsetsCompat
@@ -90,6 +95,8 @@ internal fun DocumentsScreen(
     onOpenMenu: () -> Unit = {},
     mediaGridColumns: Int = 3,
     folderGridColumns: Int = 2,
+    mediaGridState: LazyGridState,
+    folderGridState: LazyGridState,
     onMediaGridColumnsChange: (Int) -> Unit = {},
     onFolderGridColumnsChange: (Int) -> Unit = {}
 ) {
@@ -140,34 +147,21 @@ internal fun DocumentsScreen(
     }
 
     Column(Modifier.fillMaxSize().background(Color(0xFF101010)).statusBarsPadding().navigationBarsPadding()) {
-        // Keep the same gallery header hierarchy as Media: menu button, title, item count.
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onOpenMenu) {
-                Icon(Icons.Default.Menu, "Open menu", tint = Color.White, modifier = Modifier.size(27.dp))
-            }
-            Spacer(Modifier.width(4.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    when {
-                        currentFolder.isNotBlank() -> currentFolder.substringAfterLast('/')
-                        viewMode == "folders" -> "Folder"
-                        else -> "Doc"
-                    },
-                    color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    when {
-                        !hasAccess -> "Automatic document scan"
-                        viewMode == "folders" && currentFolder.isNotBlank() ->
-                            "${documents.count { !it.isDirectory && it.relativePath == currentFolder }} documents in folder"
-                        viewMode == "folders" -> "${documents.count { it.isDirectory && it.relativePath.substringBeforeLast('/', "") == currentFolder }} folders"
-                        else -> "${documents.count { !it.isDirectory }} documents"
-                    },
-                    color = Color.LightGray, fontSize = 12.sp
-                )
-            }
-        }
+        GalleryHeader(
+            title = when {
+                currentFolder.isNotBlank() -> currentFolder.substringAfterLast('/')
+                viewMode == "folders" -> "Folder"
+                else -> "Reel"
+            },
+            subtitle = when {
+                !hasAccess -> "Automatic document scan"
+                viewMode == "folders" && currentFolder.isNotBlank() ->
+                    "${documents.count { !it.isDirectory && it.relativePath == currentFolder }} documents in folder"
+                viewMode == "folders" -> "${documents.count { it.isDirectory && it.relativePath.substringBeforeLast('/', "") == currentFolder }} folders"
+                else -> "${documents.count { !it.isDirectory }} documents"
+            },
+            onOpenMenu = onOpenMenu
+        )
 
         if (!hasAccess) {
             Box(Modifier.fillMaxSize().padding(26.dp), contentAlignment = Alignment.Center) {
@@ -244,25 +238,57 @@ internal fun DocumentsScreen(
                     }
 
                     if (viewMode == "all") {
-                        if (allFiles.isEmpty()) EmptyDocumentsMessage("No supported documents found on this device.")
-                        else LazyVerticalGrid(columns = GridCells.Fixed(activeColumns), modifier = gridModifier,
-                            contentPadding = PaddingValues(6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(allFiles, key = { it.uri.toString() }) { doc ->
-                                DocumentTile(doc, false) { openedDocument = doc }
+                        if (allFiles.isEmpty()) {
+                            EmptyDocumentsMessage("No supported documents found on this device.")
+                        } else {
+                            PullToRefreshBox(
+                                isRefreshing = loading,
+                                onRefresh = { scanRevision++ },
+                                modifier = Modifier.fillMaxSize()
+                            ) {
+                                LazyVerticalGrid(
+                                    state = mediaGridState,
+                                    columns = GridCells.Fixed(activeColumns),
+                                    modifier = gridModifier,
+                                    contentPadding = PaddingValues(2.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    items(allFiles, key = { it.uri.toString() }) { doc ->
+                                        DocumentTile(doc, false) { openedDocument = doc }
+                                    }
+                                }
                             }
                         }
                     } else {
-                        val entries = childFolders + currentFiles
-                        if (entries.isEmpty()) EmptyDocumentsMessage(
-                            if (currentFolder.isBlank()) "No document folders or supported files found."
-                            else "This folder has no subfolders or supported documents.")
-                        else LazyVerticalGrid(columns = GridCells.Fixed(activeColumns), modifier = gridModifier,
-                            contentPadding = PaddingValues(6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(entries, key = { it.uri.toString() }) { entry ->
-                                DocumentTile(entry, false) {
-                                    if (entry.isDirectory) currentFolder = entry.relativePath else openedDocument = entry
+                        // Like Media > Folder, keep the root screen a folder-only grid.
+                        // Open a folder to show subfolders and supported documents within it.
+                        val entries = if (currentFolder.isBlank()) childFolders else childFolders + currentFiles
+                        if (entries.isEmpty()) {
+                            EmptyDocumentsMessage(
+                                if (currentFolder.isBlank()) "No document folders found."
+                                else "This folder has no subfolders or supported documents."
+                            )
+                        } else {
+                            PullToRefreshBox(
+                                isRefreshing = loading,
+                                onRefresh = { scanRevision++ },
+                                modifier = Modifier.fillMaxSize()
+                            ) {
+                                LazyVerticalGrid(
+                                    state = folderGridState,
+                                    columns = GridCells.Fixed(activeColumns),
+                                    modifier = gridModifier,
+                                    contentPadding = PaddingValues(6.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    items(entries, key = { it.uri.toString() }) { entry ->
+                                        DocumentTile(entry, false) {
+                                            if (entry.isDirectory) currentFolder = entry.relativePath
+                                            else openedDocument = entry
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -304,7 +330,7 @@ private fun DocumentTile(document: BrowserDocument, showPath: Boolean, onClick: 
             .combinedClickable(onClick = onClick, onLongClick = onClick)
     ) {
         Box(
-            Modifier.fillMaxWidth().aspectRatio(1.15f).background(Color(0xFF242424)),
+            Modifier.fillMaxWidth().aspectRatio(1f).background(Color(0xFF242424)),
             contentAlignment = Alignment.Center
         ) {
             Icon(icon, null, tint = tint, modifier = Modifier.size(48.dp))
@@ -511,6 +537,8 @@ private fun PdfDocumentReader(uri: Uri) {
     var zoom by remember(uri) { mutableFloatStateOf(1f) }
     val latestZoom = rememberUpdatedState(zoom)
     val latestZoomChange = rememberUpdatedState<(Float) -> Unit>({ newZoom -> zoom = newZoom })
+    val pdfListState = rememberLazyListState()
+    val pdfHorizontalScrollState = rememberScrollState()
 
     LaunchedEffect(uri) {
         loading = true
@@ -556,7 +584,7 @@ private fun PdfDocumentReader(uri: Uri) {
                             val distance = (first.position - second.position).getDistance()
                             if (previousDistance > 0.5f && distance > 0.5f) {
                                 val ratio = distance / previousDistance
-                                if (kotlin.math.abs(ratio - 1f) > 0.005f) {
+                                if (kotlin.math.abs(ratio - 1f) > 0.001f) {
                                     gestureZoom = (gestureZoom * ratio).coerceIn(0.5f, 4f)
                                     latestZoomChange.value(gestureZoom)
                                 }
@@ -570,23 +598,29 @@ private fun PdfDocumentReader(uri: Uri) {
                 }
             }
         ) {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 92.dp)
-            ) {
-                items((0 until pageCount).toList(), key = { it }) { pageIndex ->
-                    PdfPageContent(
-                        uri = uri,
-                        pageIndex = pageIndex,
-                        zoom = zoom,
-                        onZoomChange = { zoom = it.coerceIn(0.5f, 4f) }
-                    )
+            // One horizontally scrollable canvas wraps the entire vertical page list.
+            // Zoom and horizontal panning are therefore shared by every page, not per-page.
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val documentWidth = maxWidth * zoom
+                Row(
+                    Modifier.fillMaxSize().horizontalScroll(pdfHorizontalScrollState),
+                    horizontalArrangement = Arrangement.Start
+                ) {
+                    LazyColumn(
+                        state = pdfListState,
+                        modifier = Modifier.width(documentWidth).fillMaxHeight(),
+                        contentPadding = PaddingValues(bottom = 18.dp)
+                    ) {
+                        items((0 until pageCount).toList(), key = { it }) { pageIndex ->
+                            PdfPageContent(uri = uri, pageIndex = pageIndex)
+                        }
+                    }
                 }
             }
             DocumentZoomControls(
                 zoom = zoom,
                 onZoomChange = { zoom = it.coerceIn(0.5f, 4f) },
-                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 18.dp)
+                modifier = Modifier.align(Alignment.CenterEnd).padding(end = 12.dp).zIndex(3f)
             )
         }
     }
@@ -595,9 +629,7 @@ private fun PdfDocumentReader(uri: Uri) {
 @Composable
 private fun PdfPageContent(
     uri: Uri,
-    pageIndex: Int,
-    zoom: Float,
-    onZoomChange: (Float) -> Unit
+    pageIndex: Int
 ) {
     val context = LocalContext.current
     var bitmap by remember(uri, pageIndex) { mutableStateOf<Bitmap?>(null) }
@@ -633,28 +665,23 @@ private fun PdfPageContent(
         loading = false
     }
 
-    BoxWithConstraints(
-        Modifier.fillMaxWidth().padding(horizontal = 0.dp, vertical = 1.dp)
-    ) {
-        val pageWidth = maxWidth * zoom
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-            when {
-                bitmap != null -> Image(
-                    bitmap = bitmap!!.asImageBitmap(),
-                    contentDescription = "PDF page ${pageIndex + 1}",
-                    modifier = Modifier.width(pageWidth).padding(horizontal = 2.dp, vertical = 3.dp)
-                        .background(Color.White)
-                )
-                loading -> Box(
-                    Modifier.fillMaxWidth().height(180.dp),
-                    contentAlignment = Alignment.Center
-                ) { CircularProgressIndicator(color = Color(0xFFFF4D7D)) }
-                error != null -> Text(
-                    error.orEmpty(),
-                    color = Color.White,
-                    modifier = Modifier.fillMaxWidth().padding(18.dp)
-                )
-            }
+    Box(Modifier.fillMaxWidth().padding(vertical = 1.dp)) {
+        when {
+            bitmap != null -> Image(
+                bitmap = bitmap!!.asImageBitmap(),
+                contentDescription = "PDF page ${pageIndex + 1}",
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp, vertical = 3.dp)
+                    .background(Color.White)
+            )
+            loading -> Box(
+                Modifier.fillMaxWidth().height(180.dp),
+                contentAlignment = Alignment.Center
+            ) { CircularProgressIndicator(color = Color(0xFFFF4D7D)) }
+            error != null -> Text(
+                error.orEmpty(),
+                color = Color.White,
+                modifier = Modifier.fillMaxWidth().padding(18.dp)
+            )
         }
     }
 }
@@ -667,33 +694,44 @@ private fun DocumentZoomControls(
 ) {
     Surface(
         modifier = modifier,
-        color = Color(0xF5222222),
+        color = Color(0xF5000000),
         shape = MaterialTheme.shapes.extraLarge,
-        border = BorderStroke(1.dp, Color(0xFFFF4D7D)),
-        shadowElevation = 10.dp
+        border = BorderStroke(2.dp, Color(0xFFFF4D7D)),
+        shadowElevation = 16.dp
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier.padding(horizontal = 5.dp, vertical = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(7.dp)
         ) {
-            IconButton(
-                onClick = { onZoomChange((zoom / 1.2f).coerceAtLeast(0.5f)) },
-                modifier = Modifier.size(48.dp)
+            Surface(
+                onClick = { onZoomChange((zoom * 1.2f).coerceAtMost(4f)) },
+                modifier = Modifier.size(58.dp),
+                color = Color(0xFFFF4D7D),
+                shape = CircleShape,
+                shadowElevation = 4.dp
             ) {
-                Icon(Icons.Default.Remove, contentDescription = "Zoom out", tint = Color.White, modifier = Modifier.size(28.dp))
+                Box(contentAlignment = Alignment.Center) {
+                    Text("+", color = Color.White, fontSize = 42.sp, fontWeight = FontWeight.Bold)
+                }
             }
             Text(
                 "${(zoom * 100).toInt()}%",
                 color = Color.White,
-                fontSize = 14.sp,
+                fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 8.dp)
+                modifier = Modifier.padding(vertical = 2.dp)
             )
-            IconButton(
-                onClick = { onZoomChange((zoom * 1.2f).coerceAtMost(4f)) },
-                modifier = Modifier.size(48.dp)
+            Surface(
+                onClick = { onZoomChange((zoom / 1.2f).coerceAtLeast(0.5f)) },
+                modifier = Modifier.size(58.dp),
+                color = Color.White,
+                shape = CircleShape,
+                shadowElevation = 4.dp
             ) {
-                Icon(Icons.Default.Add, contentDescription = "Zoom in", tint = Color.White, modifier = Modifier.size(28.dp))
+                Box(contentAlignment = Alignment.Center) {
+                    Text("−", color = Color(0xFF161616), fontSize = 42.sp, fontWeight = FontWeight.Bold)
+                }
             }
         }
     }

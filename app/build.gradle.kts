@@ -12,8 +12,20 @@ android {
         applicationId = "com.baiju.instagallery"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
+        versionCode = providers.gradleProperty("ciVersionCode").orNull?.toIntOrNull()?.coerceAtLeast(1) ?: 1
         versionName = "1.0"
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            val ciKeystore = file("ci-debug.keystore")
+            if (ciKeystore.exists()) {
+                storeFile = ciKeystore
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
     }
 
     buildFeatures { compose = true }

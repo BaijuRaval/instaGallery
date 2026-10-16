@@ -165,6 +165,34 @@ private fun simpleFadeTransition() =
     fadeIn(animationSpec = tween(durationMillis = 180)) togetherWith
         fadeOut(animationSpec = tween(durationMillis = 180))
 
+@Composable
+internal fun GalleryHeader(
+    title: String,
+    subtitle: String,
+    onOpenMenu: () -> Unit
+) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconButton(onClick = onOpenMenu) {
+            Icon(Icons.Default.Menu, "Open menu", tint = Color.White, modifier = Modifier.size(27.dp))
+        }
+        Spacer(Modifier.width(4.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                title,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(subtitle, color = Color.LightGray, fontSize = 12.sp)
+        }
+    }
+}
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -791,6 +819,8 @@ private fun GalleryApp() {
                 onOpenMenu = { mainMenuOpen = true },
                 mediaGridColumns = mediaGridColumns,
                 folderGridColumns = folderGridColumns,
+                mediaGridState = mediaGridState,
+                folderGridState = folderGridState,
                 onMediaGridColumnsChange = { mediaGridColumns = it },
                 onFolderGridColumnsChange = { folderGridColumns = it },
                 onBack = {
@@ -916,23 +946,18 @@ private fun GalleryApp() {
                             }
                         }
                         else -> {
-                            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                IconButton(onClick = { mainMenuOpen = true }) {
-                                    Icon(Icons.Default.Menu, "Open menu", tint = Color.White, modifier = Modifier.size(27.dp))
-                                }
-                                Spacer(Modifier.width(4.dp))
-                                Column(Modifier.weight(1f)) {
-                                    Text(when {
-                                        transferMode != null -> "Choose destination"
-                                        tab == "Folders" && selectedAlbum != "All media" -> selectedAlbum
-                                        tab == "Folders" -> "Folder"
-                                        tab == "Images" -> "Images"
-                                        tab == "Videos" -> "Videos"
-                                        else -> "Reel"
-                                    }, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(if (transferMode != null) "${transferMode} to a folder" else "${visible.size} items", color = Color.LightGray, fontSize = 12.sp)
-                                }
-                            }
+                            GalleryHeader(
+                                title = when {
+                                    transferMode != null -> "Choose destination"
+                                    tab == "Folders" && selectedAlbum != "All media" -> selectedAlbum
+                                    tab == "Folders" -> "Folder"
+                                    tab == "Images" -> "Images"
+                                    tab == "Videos" -> "Videos"
+                                    else -> "Reel"
+                                },
+                                subtitle = if (transferMode != null) "${transferMode} to a folder" else "${visible.size} items",
+                                onOpenMenu = { mainMenuOpen = true }
+                            )
                         }
                     }
                 }
