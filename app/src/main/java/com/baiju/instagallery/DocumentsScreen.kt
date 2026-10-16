@@ -82,6 +82,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import org.apache.poi.hwpf.HWPFDocument
+import org.apache.poi.hwpf.extractor.WordExtractor
 import java.io.File
 import java.text.DateFormat
 import java.util.Date
@@ -935,7 +937,7 @@ private fun BuiltInDocumentReader(document: BrowserDocument, onBack: () -> Unit)
     val context = LocalContext.current
     // Formats supported by the built-in text extractor stay in-app so pinch-to-zoom works.
     // Legacy binary Office formats still require a compatible external viewer.
-    val originalViewerExtensions = setOf("doc", "xls", "ppt")
+    val originalViewerExtensions = setOf("xls", "ppt")
     val requiresOriginalViewer = document.extension in originalViewerExtensions
     var openError by remember(document.uri) { mutableStateOf<String?>(null) }
 
@@ -1395,7 +1397,20 @@ private fun readDocumentText(context: Context, document: BrowserDocument): Pair<
         }
         return if (output.isNullOrBlank()) null to "No readable text was found in this document." else output to null
     }
-    if (ext in setOf("doc", "xls", "ppt")) return null to "This older binary Office format is not supported by the built-in parser."
+    if (ext == "doc") {
+        return try {
+            val text = ByteArrayInputStream(bytes).use { input ->
+                HWPFDocument(input).use { document ->
+                    WordExtractor(document).use { extractor -> extractor.text }
+                }
+            }
+            if (text.isBlank()) null to "No readable text was found in this Word document."
+            else text to null
+        } catch (e: Exception) {
+            null to "Could not read this legacy Word .doc file: " + (e.message ?: "unsupported or damaged file")
+        }
+    }
+    if (ext in setOf("xls", "ppt")) return null to "This older binary Office format is not supported by the built-in reader yet."
     return null to "This file format is not supported by the built-in reader yet."
 }
 
