@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
+import android.content.ClipData
+import android.media.MediaScannerConnection
 import android.database.Cursor
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
@@ -17,6 +19,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -38,6 +41,12 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.DriveFileMove
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.Slideshow
@@ -62,9 +71,13 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.text.DateFormat
+import java.util.Date
 import java.nio.charset.StandardCharsets
 import java.util.zip.ZipInputStream
 
@@ -75,7 +88,8 @@ private data class BrowserDocument(
     val relativePath: String,
     val size: Long,
     val modified: Long,
-    val isDirectory: Boolean
+    val isDirectory: Boolean,
+    val absolutePath: String = ""
 ) {
     val extension: String get() = name.substringAfterLast('.', "").lowercase()
     val displayPath: String get() = if (relativePath.isBlank()) name else "$relativePath/$name"
@@ -104,6 +118,8 @@ internal fun DocumentsScreen(
     onFolderGridColumnsChange: (Int) -> Unit = {}
 ) {
     val context = LocalContext.current
+    val storageRoot = remember { Environment.getExternalStorageDirectory() }
+    val scope = rememberCoroutineScope()
     var documents by remember { mutableStateOf(emptyList<BrowserDocument>()) }
     var loading by remember { mutableStateOf(false) }
     var scanError by remember { mutableStateOf<String?>(null) }
@@ -111,16 +127,23 @@ internal fun DocumentsScreen(
     var viewMode by remember { mutableStateOf(initialViewMode) }
     var currentFolder by remember { mutableStateOf("") }
     var openedDocument by remember { mutableStateOf<BrowserDocument?>(null) }
+    var selectedUris by remember { mutableStateOf<Set<Uri>>(emptySet()) }
+    var selectedFolderPath by remember { mutableStateOf<String?>(null) }
+    var showDetails by remember { mutableStateOf(false) }
+    var showRename by remember { mutableStateOf(false) }
+    var renameFolderMode by remember { mutableStateOf(false) }
+    var renameText by remember { mutableStateOf("") }
+    var transferMode by remember { mutableStateOf<String?>(null) }
+    var isActionRunning by remember { mutableStateOf(false) }
+    var statusMessage by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(initialViewMode) {
         viewMode = initialViewMode
         currentFolder = ""
+        selectedUris = emptySet()
+        selectedFolderPath = null
     }
-
-    LaunchedEffect(openedDocument) {
-        onDocumentOpenChanged(openedDocument != null)
-    }
-
+    LaunchedEffect(openedDocument) { onDocumentOpenChanged(openedDocument != null) }
     LaunchedEffect(hasAccess, scanRevision) {
         if (!hasAccess) {
             documents = emptyList()
@@ -136,85 +159,312 @@ internal fun DocumentsScreen(
         }
     }
 
-    BackHandler(enabled = openedDocument != null || currentFolder.isNotBlank()) {
+    val allFiles = documents.filter { !it.isDirectory }.sortedBy { it.displayPath.lowercase() }
+    val childFolders = documents.filter {
+        it.isDirectory && it.relativePath.substringBeforeLast('/', "") == currentFolder
+    }.sortedBy { it.name.lowercase() }
+    val currentFiles = documents.filter { !it.isDirectory && it.relativePath == currentFolder }
+        .sortedBy { it.name.lowercase() }
+    val selectableDocuments = if (viewMode == "all") allFiles else currentFiles
+    val selectedDocuments = documents.filter { !it.isDirectory && it.uri in selectedUris }
+    val allVisibleSelected = selectableDocuments.isNotEmpty() && selectableDocuments.all { it.uri in selectedUris }
+
+    fun fileForDocument(document: BrowserDocument): File {
+        if (document.absolutePath.isNotBlank()) {
+            val pathFile = File(document.absolutePath)
+            if (pathFile.exists()) return pathFile
+        }
+        val relative = listOf(document.relativePath.trim('/'), document.name)
+            .filter { it.isNotBlank() }.joinToString("/")
+        return File(storageRoot, relative)
+    }
+    fun directoryForRelativePath(path: String): File {
+        if (path.isBlank()) return storageRoot
+        val descendant = documents.firstOrNull {
+            !it.isDirectory && (it.relativePath == path || it.relativePath.startsWith("$"+"{path}/"))
+        } ?: return File(storageRoot, path)
+        var folder = fileForDocument(descendant).parentFile
+        var cursor = descendant.relativePath
+        while (cursor != path && cursor.isNotBlank()) {
+            folder = folder?.parentFile
+            cursor = cursor.substringBeforeLast('/', "")
+        }
+        return folder ?: File(storageRoot, path)
+    }
+    fun cleanFileName(value: String) = value.trim().replace("/", "_").replace("\\", "_").trimEnd('.', ' ')
+    fun scanChangedPaths(vararg paths: String) {
+        val validPaths = paths.filter { it.isNotBlank() }.distinct().toTypedArray()
+        if (validPaths.isNotEmpty()) MediaScannerConnection.scanFile(context, validPaths, null, null)
+    }
+
+    fun shareSelectedDocuments() {
+        val targets = selectedDocuments
+        if (targets.isEmpty()) return
+        try {
+            val uris = ArrayList(targets.map { it.uri })
+            val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                type = "*/*"
+                putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                val first = uris.firstOrNull()
+                if (first != null) {
+                    val sharedItems = ClipData.newUri(context.contentResolver, "Documents", first)
+                    uris.drop(1).forEach { sharedItems.addItem(ClipData.Item(it)) }
+                    clipData = sharedItems
+                }
+            }
+            context.startActivity(Intent.createChooser(intent, "Share documents"))
+        } catch (e: Exception) {
+            statusMessage = "Could not share selected documents. " + (e.message ?: "")
+        }
+    }
+
+    fun moveOrCopyDocuments(destinationPath: String) {
+        val mode = transferMode ?: return
+        val targets = selectedDocuments
+        transferMode = null
+        isActionRunning = true
+        scope.launch {
+            val outcome = withContext(Dispatchers.IO) {
+                var succeeded = 0
+                val errors = mutableListOf<String>()
+                val destination = directoryForRelativePath(destinationPath)
+                if (!destination.exists() && !destination.mkdirs()) {
+                    errors.add("The destination folder could not be created.")
+                } else {
+                    targets.forEach { document ->
+                        try {
+                            val source = fileForDocument(document)
+                            if (!source.isFile) errors.add(document.name + ": original file not found.")
+                            else if (source.canonicalFile == destination.canonicalFile) {
+                                errors.add(document.name + ": source and destination are the same folder.")
+                            } else {
+                                var target = File(destination, source.name)
+                                if (target.exists()) {
+                                    val base = source.name.substringBeforeLast('.', source.name)
+                                    val extension = source.name.substringAfterLast('.', "").let { if (it.isBlank()) "" else ".$"+"{it}" }
+                                    var copyIndex = 1
+                                    do {
+                                        target = File(destination, "$"+"{base} (copy $copyIndex)$"+"{extension}")
+                                        copyIndex++
+                                    } while (target.exists() && copyIndex < 10000)
+                                }
+                                source.inputStream().buffered().use { input ->
+                                    target.outputStream().buffered().use { output -> input.copyTo(output) }
+                                }
+                                if (mode == "Move" && !source.delete()) {
+                                    target.delete()
+                                    errors.add(document.name + ": copied but original could not be removed.")
+                                } else {
+                                    succeeded++
+                                    scanChangedPaths(source.absolutePath, target.absolutePath)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            errors.add(document.name + ": " + (e.message ?: "operation failed"))
+                        }
+                    }
+                }
+                succeeded to errors
+            }
+            isActionRunning = false
+            selectedUris = emptySet()
+            scanRevision++
+            statusMessage = buildString {
+                append("$"+"{mode} completed for $"+"{outcome.first} of $"+"{targets.size} document(s).")
+                if (outcome.second.isNotEmpty()) {
+                    append("\n\n")
+                    append(outcome.second.take(4).joinToString("\n"))
+                    if (outcome.second.size > 4) append("\nAnd $"+"{outcome.second.size - 4} more issue(s).")
+                }
+            }
+        }
+    }
+
+    fun renameSelectedItems() {
+        val targets = selectedDocuments
+        val folderPath = selectedFolderPath
+        if (renameFolderMode && folderPath != null) {
+            val clean = cleanFileName(renameText)
+            if (clean.isBlank()) { statusMessage = "Enter a valid folder name."; return }
+            showRename = false
+            isActionRunning = true
+            scope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    try {
+                        val source = directoryForRelativePath(folderPath)
+                        val destination = File(source.parentFile ?: storageRoot, clean)
+                        when {
+                            !source.isDirectory -> "Source folder could not be found."
+                            destination.exists() -> "A folder with that name already exists."
+                            !source.renameTo(destination) -> "Android could not rename this folder."
+                            else -> {
+                                scanChangedPaths(source.absolutePath, destination.absolutePath)
+                                "Folder renamed to $clean."
+                            }
+                        }
+                    } catch (e: Exception) { "Could not rename folder: " + (e.message ?: "unknown error") }
+                }
+                isActionRunning = false
+                selectedFolderPath = null
+                scanRevision++
+                statusMessage = result
+            }
+            return
+        }
+        if (targets.isEmpty()) return
+        val baseName = cleanFileName(renameText)
+        if (baseName.isBlank()) { statusMessage = "Enter a valid file name."; return }
+        showRename = false
+        isActionRunning = true
+        scope.launch {
+            val outcome = withContext(Dispatchers.IO) {
+                var renamed = 0
+                val errors = mutableListOf<String>()
+                targets.forEachIndexed { index, document ->
+                    try {
+                        val source = fileForDocument(document)
+                        val extension = source.name.substringAfterLast('.', "").let {
+                            if (source.name.lastIndexOf('.') > 0 && it.isNotBlank()) ".$"+"{it}" else ""
+                        }
+                        val requestedName = if (targets.size == 1) {
+                            if (extension.isNotBlank() && baseName.endsWith(extension, ignoreCase = true)) baseName
+                            else baseName + extension
+                        } else "$"+"{baseName} ($"+"{index + 1})$"+"{extension}"
+                        val destination = File(source.parentFile ?: storageRoot, requestedName)
+                        when {
+                            !source.isFile -> errors.add(source.name + ": file not found.")
+                            source.absolutePath == destination.absolutePath -> renamed++
+                            destination.exists() -> errors.add(requestedName + " already exists.")
+                            !source.renameTo(destination) -> errors.add(source.name + ": rename failed.")
+                            else -> { renamed++; scanChangedPaths(source.absolutePath, destination.absolutePath) }
+                        }
+                    } catch (e: Exception) { errors.add(document.name + ": " + (e.message ?: "rename failed")) }
+                }
+                renamed to errors
+            }
+            isActionRunning = false
+            selectedUris = emptySet()
+            scanRevision++
+            statusMessage = buildString {
+                append("Renamed $"+"{outcome.first} of $"+"{targets.size} document(s).")
+                if (outcome.second.isNotEmpty()) {
+                    append("\n\n")
+                    append(outcome.second.take(4).joinToString("\n"))
+                    if (outcome.second.size > 4) append("\nAnd $"+"{outcome.second.size - 4} more issue(s).")
+                }
+            }
+        }
+    }
+
+    BackHandler(enabled = selectedUris.isNotEmpty() || selectedFolderPath != null ||
+        openedDocument != null || currentFolder.isNotBlank()) {
         when {
+            selectedUris.isNotEmpty() -> selectedUris = emptySet()
+            selectedFolderPath != null -> selectedFolderPath = null
             openedDocument != null -> openedDocument = null
             currentFolder.isNotBlank() -> currentFolder = currentFolder.substringBeforeLast('/', "")
         }
     }
 
-    val selectedDocument = openedDocument
-    if (selectedDocument != null) {
-        BuiltInDocumentReader(selectedDocument) { openedDocument = null }
+    val opened = openedDocument
+    if (opened != null) {
+        BuiltInDocumentReader(opened) {
+            openedDocument = null
+            selectedUris = emptySet()
+            selectedFolderPath = null
+        }
         return
     }
 
     Column(
         Modifier.fillMaxSize().background(Color(0xFF101010)).statusBarsPadding().navigationBarsPadding()
-            .pointerInput(viewMode, currentFolder, openedDocument, hasAccess) {
+            .pointerInput(viewMode, currentFolder, hasAccess, selectedUris, selectedFolderPath) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
-                    var multiTouchSwipe = false
+                    var multiTouch = false
                     var deltaX = 0f
                     var deltaY = 0f
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Final)
-                        val pressed = event.changes.filter { it.pressed }
-                        if (pressed.size >= 2) multiTouchSwipe = true
+                        if (event.changes.count { it.pressed } >= 2) multiTouch = true
                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
                         deltaX = change.position.x - down.position.x
                         deltaY = change.position.y - down.position.y
                         if (!change.pressed) {
-                            val deliberateSwipeThreshold = maxOf(viewConfiguration.touchSlop * 1.8f, 48.dp.toPx())
-                            if (!multiTouchSwipe && kotlin.math.abs(deltaX) >= deliberateSwipeThreshold &&
+                            val threshold = maxOf(viewConfiguration.touchSlop * 1.8f, 48.dp.toPx())
+                            if (!multiTouch && selectedUris.isEmpty() && selectedFolderPath == null &&
+                                kotlin.math.abs(deltaX) >= threshold &&
                                 kotlin.math.abs(deltaX) > kotlin.math.abs(deltaY) * 1.4f &&
-                                currentFolder.isBlank() && openedDocument == null && hasAccess
-                            ) {
-                                onSwipeModeChange(deltaX < 0f)
-                            }
+                                currentFolder.isBlank() && hasAccess
+                            ) onSwipeModeChange(deltaX < 0f)
                             break
                         }
                     }
                 }
             }
     ) {
-        GalleryHeader(
-            title = when {
-                currentFolder.isNotBlank() -> currentFolder.substringAfterLast('/')
-                viewMode == "folders" -> "Folder"
-                else -> "All"
-            },
-            subtitle = when {
-                !hasAccess -> "Automatic document scan"
-                viewMode == "folders" && currentFolder.isNotBlank() ->
-                    "${documents.count { !it.isDirectory && it.relativePath == currentFolder }} documents in folder"
-                viewMode == "folders" -> "${documents.count { it.isDirectory && it.relativePath.substringBeforeLast('/', "") == currentFolder }} folders"
-                else -> "${documents.count { !it.isDirectory }} documents"
-            },
-            onOpenMenu = onOpenMenu
-        )
-
-        if (!hasAccess) {
-            Box(Modifier.fillMaxSize().padding(26.dp), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Default.Folder, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(62.dp))
-                    Spacer(Modifier.height(16.dp))
-                    Text("Scan documents automatically", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "No folder picker. Allow instaGallery to access files once in Android Settings; then PDF, Word, Excel, PowerPoint and text documents will be scanned automatically.",
-                        color = Color.LightGray, fontSize = 14.sp
-                    )
-                    Spacer(Modifier.height(18.dp))
-                    Button(onClick = onRequestAccess) { Text("Allow file access") }
+        when {
+            selectedUris.isNotEmpty() -> {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { selectedUris = emptySet() }) { Icon(Icons.Default.Close, "Exit selection", tint = Color.White) }
+                    TextButton(
+                        onClick = { selectedUris = if (allVisibleSelected) emptySet() else selectableDocuments.map { it.uri }.toSet() },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("$"+"{selectedUris.size}/$"+"{selectableDocuments.size}", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            Text(if (allVisibleSelected) "Deselect all" else "Select all", fontSize = 12.sp, color = Color.LightGray)
+                        }
+                    }
                 }
             }
-        } else {
-            when {
-                loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            selectedFolderPath != null -> {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { selectedFolderPath = null }) { Icon(Icons.Default.Close, "Clear folder selection", tint = Color.White) }
+                    Column(Modifier.weight(1f)) {
+                        Text(selectedFolderPath!!.substringAfterLast('/'), fontSize = 22.sp, fontWeight = FontWeight.Bold,
+                            color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        val count = documents.count { !it.isDirectory && (it.relativePath == selectedFolderPath || it.relativePath.startsWith("$"+"{selectedFolderPath}/")) }
+                        Text("Folder selected • $count documents", color = Color.LightGray, fontSize = 12.sp)
+                    }
+                }
+            }
+            else -> GalleryHeader(
+                title = when {
+                    currentFolder.isNotBlank() -> currentFolder.substringAfterLast('/')
+                    viewMode == "folders" -> "Folder"
+                    else -> "All"
+                },
+                subtitle = when {
+                    !hasAccess -> "Automatic document scan"
+                    viewMode == "folders" && currentFolder.isNotBlank() -> "$"+"{currentFiles.size} documents in folder"
+                    viewMode == "folders" -> "$"+"{childFolders.size} folders"
+                    else -> "$"+"{allFiles.size} documents"
+                },
+                onOpenMenu = onOpenMenu
+            )
+        }
+
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            if (!hasAccess) {
+                Box(Modifier.fillMaxSize().padding(26.dp), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.Folder, null, tint = Color(0xFFFF4D7D), modifier = Modifier.size(62.dp))
+                        Spacer(Modifier.height(16.dp))
+                        Text("Scan documents automatically", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(8.dp))
+                        Text("No folder picker. Allow instaGallery to access files once in Android Settings; then PDF, Word, Excel, PowerPoint and text documents will be scanned automatically.",
+                            color = Color.LightGray, fontSize = 14.sp)
+                        Spacer(Modifier.height(18.dp))
+                        Button(onClick = onRequestAccess) { Text("Allow file access") }
+                    }
+                }
+            } else when {
+                loading && documents.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = Color(0xFFFF4D7D))
                 }
-                scanError != null -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                scanError != null && documents.isEmpty() -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(scanError.orEmpty(), color = Color.White)
                         Spacer(Modifier.height(12.dp))
@@ -222,16 +472,8 @@ internal fun DocumentsScreen(
                     }
                 }
                 else -> {
-                    val allFiles = documents.filter { !it.isDirectory }.sortedBy { it.displayPath.lowercase() }
-                    val childFolders = documents.filter {
-                        it.isDirectory && it.relativePath.substringBeforeLast('/', "") == currentFolder
-                    }.sortedBy { it.name.lowercase() }
-                    val currentFiles = documents.filter { !it.isDirectory && it.relativePath == currentFolder }
-                        .sortedBy { it.name.lowercase() }
                     val activeColumns = if (viewMode == "all") mediaGridColumns else folderGridColumns
-                    val gridModifier = Modifier.fillMaxSize().pointerInput(
-                        viewMode, mediaGridColumns, folderGridColumns
-                    ) {
+                    val gridModifier = Modifier.fillMaxSize().pointerInput(viewMode, mediaGridColumns, folderGridColumns) {
                         awaitEachGesture {
                             awaitFirstDown(requireUnconsumed = false)
                             var accumulatedZoom = 1f
@@ -240,25 +482,17 @@ internal fun DocumentsScreen(
                                 val pointers = event.changes.filter { it.pressed }
                                 if (pointers.isEmpty()) break
                                 if (pointers.size >= 2) {
-                                    val first = pointers[0]
-                                    val second = pointers[1]
-                                    val previousDistance = (first.previousPosition - second.previousPosition).getDistance()
-                                    val currentDistance = (first.position - second.position).getDistance()
+                                    val previousDistance = (pointers[0].previousPosition - pointers[1].previousPosition).getDistance()
+                                    val currentDistance = (pointers[0].position - pointers[1].position).getDistance()
                                     if (previousDistance > 0.5f) {
                                         accumulatedZoom *= currentDistance / previousDistance
                                         if (accumulatedZoom > 1.16f) {
-                                            if (viewMode == "all") {
-                                                onMediaGridColumnsChange((mediaGridColumns - 1).coerceAtLeast(2))
-                                            } else {
-                                                onFolderGridColumnsChange((folderGridColumns - 1).coerceAtLeast(1))
-                                            }
+                                            if (viewMode == "all") onMediaGridColumnsChange((mediaGridColumns - 1).coerceAtLeast(2))
+                                            else onFolderGridColumnsChange((folderGridColumns - 1).coerceAtLeast(1))
                                             accumulatedZoom = 1f
                                         } else if (accumulatedZoom < 0.86f) {
-                                            if (viewMode == "all") {
-                                                onMediaGridColumnsChange((mediaGridColumns + 1).coerceAtMost(6))
-                                            } else {
-                                                onFolderGridColumnsChange((folderGridColumns + 1).coerceAtMost(4))
-                                            }
+                                            if (viewMode == "all") onMediaGridColumnsChange((mediaGridColumns + 1).coerceAtMost(6))
+                                            else onFolderGridColumnsChange((folderGridColumns + 1).coerceAtMost(4))
                                             accumulatedZoom = 1f
                                         }
                                     }
@@ -267,58 +501,63 @@ internal fun DocumentsScreen(
                             }
                         }
                     }
-
-                    if (viewMode == "all") {
-                        if (allFiles.isEmpty()) {
-                            EmptyDocumentsMessage("No supported documents found on this device.")
-                        } else {
-                            PullToRefreshBox(
-                                isRefreshing = loading,
-                                onRefresh = { scanRevision++ },
-                                modifier = Modifier.fillMaxSize()
-                            ) {
-                                LazyVerticalGrid(
-                                    state = mediaGridState,
-                                    columns = GridCells.Fixed(activeColumns),
-                                    modifier = gridModifier,
-                                    contentPadding = PaddingValues(2.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(2.dp),
-                                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                                ) {
-                                    items(allFiles, key = { it.uri.toString() }) { doc ->
-                                        DocumentTile(doc, false) { openedDocument = doc }
-                                    }
-                                }
-                            }
-                        }
+                    val entries = if (currentFolder.isBlank()) childFolders else childFolders + currentFiles
+                    val showFolders = viewMode == "folders"
+                    val empty = if (showFolders) entries.isEmpty() else allFiles.isEmpty()
+                    if (empty) {
+                        EmptyDocumentsMessage(when {
+                            showFolders && currentFolder.isBlank() -> "No document folders found."
+                            showFolders -> "This folder has no subfolders or supported documents."
+                            else -> "No supported documents found on this device."
+                        })
                     } else {
-                        // Like Media > Folder, keep the root screen a folder-only grid.
-                        // Open a folder to show subfolders and supported documents within it.
-                        val entries = if (currentFolder.isBlank()) childFolders else childFolders + currentFiles
-                        if (entries.isEmpty()) {
-                            EmptyDocumentsMessage(
-                                if (currentFolder.isBlank()) "No document folders found."
-                                else "This folder has no subfolders or supported documents."
-                            )
-                        } else {
-                            PullToRefreshBox(
-                                isRefreshing = loading,
-                                onRefresh = { scanRevision++ },
-                                modifier = Modifier.fillMaxSize()
-                            ) {
+                        PullToRefreshBox(isRefreshing = loading, onRefresh = { scanRevision++ }, modifier = Modifier.fillMaxSize()) {
+                            if (showFolders) {
                                 LazyVerticalGrid(
-                                    state = folderGridState,
-                                    columns = GridCells.Fixed(activeColumns),
-                                    modifier = gridModifier,
+                                    state = folderGridState, columns = GridCells.Fixed(activeColumns), modifier = gridModifier,
                                     contentPadding = PaddingValues(6.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     items(entries, key = { it.uri.toString() }) { entry ->
-                                        DocumentTile(entry, false) {
-                                            if (entry.isDirectory) currentFolder = entry.relativePath
-                                            else openedDocument = entry
-                                        }
+                                        val isSelected = if (entry.isDirectory) selectedFolderPath == entry.relativePath else entry.uri in selectedUris
+                                        DocumentTile(entry, isSelected, false,
+                                            onClick = {
+                                                if (entry.isDirectory) {
+                                                    if (selectedUris.isEmpty() && selectedFolderPath == null) currentFolder = entry.relativePath
+                                                } else when {
+                                                    selectedFolderPath != null -> Unit
+                                                    selectedUris.isNotEmpty() -> selectedUris = if (entry.uri in selectedUris) selectedUris - entry.uri else selectedUris + entry.uri
+                                                    else -> openedDocument = entry
+                                                }
+                                            },
+                                            onLongClick = {
+                                                if (entry.isDirectory) {
+                                                    selectedUris = emptySet()
+                                                    selectedFolderPath = entry.relativePath
+                                                } else {
+                                                    selectedFolderPath = null
+                                                    selectedUris = if (entry.uri in selectedUris) selectedUris - entry.uri else selectedUris + entry.uri
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
+                            } else {
+                                LazyVerticalGrid(
+                                    state = mediaGridState, columns = GridCells.Fixed(activeColumns), modifier = gridModifier,
+                                    contentPadding = PaddingValues(2.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp), verticalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    items(allFiles, key = { it.uri.toString() }) { doc ->
+                                        DocumentTile(doc, doc.uri in selectedUris, false,
+                                            onClick = {
+                                                if (selectedUris.isNotEmpty()) selectedUris = if (doc.uri in selectedUris) selectedUris - doc.uri else selectedUris + doc.uri
+                                                else openedDocument = doc
+                                            },
+                                            onLongClick = {
+                                                selectedUris = if (doc.uri in selectedUris) selectedUris - doc.uri else selectedUris + doc.uri
+                                            }
+                                        )
                                     }
                                 }
                             }
@@ -327,6 +566,108 @@ internal fun DocumentsScreen(
                 }
             }
         }
+
+        when {
+            selectedUris.isNotEmpty() -> Row(
+                Modifier.fillMaxWidth().background(Color(0xFF171717)).padding(horizontal = 2.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically
+            ) {
+                DocumentBottomAction("Details", Icons.Default.Info, Modifier.weight(1f)) { showDetails = true }
+                DocumentBottomAction("Rename", Icons.Default.Edit, Modifier.weight(1f)) {
+                    renameFolderMode = false
+                    renameText = selectedDocuments.singleOrNull()?.name?.substringBeforeLast('.') ?: ""
+                    showRename = true
+                }
+                DocumentBottomAction("Copy", Icons.Default.ContentCopy, Modifier.weight(1f)) { transferMode = "Copy" }
+                DocumentBottomAction("Move", Icons.Default.DriveFileMove, Modifier.weight(1f)) { transferMode = "Move" }
+                DocumentBottomAction("Share", Icons.Default.Share, Modifier.weight(1f)) { shareSelectedDocuments() }
+            }
+            selectedFolderPath != null -> Row(
+                Modifier.fillMaxWidth().background(Color(0xFF171717)).padding(horizontal = 8.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically
+            ) {
+                DocumentBottomAction("Details", Icons.Default.Info, Modifier.weight(1f)) { showDetails = true }
+                DocumentBottomAction("Rename", Icons.Default.Edit, Modifier.weight(1f)) {
+                    renameFolderMode = true
+                    renameText = selectedFolderPath!!.substringAfterLast('/')
+                    showRename = true
+                }
+            }
+            else -> Spacer(Modifier.windowInsetsBottomHeight(androidx.compose.foundation.layout.WindowInsets.navigationBars))
+        }
+    }
+
+    if (showDetails) AlertDialog(
+        onDismissRequest = { showDetails = false },
+        title = { Text(if (selectedFolderPath != null) "Folder details" else "Document details") },
+        text = {
+            Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
+                if (selectedFolderPath != null) {
+                    val folder = selectedFolderPath!!
+                    Text("Name: " + folder.substringAfterLast('/'))
+                    Text("Documents: " + documents.count { !it.isDirectory && (it.relativePath == folder || it.relativePath.startsWith("$"+"{folder}/")) })
+                    Text("Location: $folder")
+                } else if (selectedDocuments.size == 1) {
+                    val doc = selectedDocuments.first()
+                    Text("Name: $"+"{doc.name}")
+                    Text("Type: $"+"{doc.mimeType}")
+                    Text("Folder: " + doc.relativePath.ifBlank { "Internal storage" })
+                    Text("Size: $"+"{doc.size / 1024} KB")
+                    Text("Modified: " + if (doc.modified > 0) DateFormat.getDateTimeInstance().format(Date(doc.modified * 1000)) else "Unknown")
+                    Text("Location: $"+"{doc.displayPath}", fontSize = 11.sp)
+                } else {
+                    Text("Documents: $"+"{selectedDocuments.size}")
+                    Text("Total size: $"+"{selectedDocuments.sumOf { it.size } / 1024} KB")
+                    Text("Selected files remain on your device until you choose an action.")
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { showDetails = false }) { Text("Done") } }
+    )
+
+    if (showRename) AlertDialog(
+        onDismissRequest = { showRename = false },
+        title = { Text(if (renameFolderMode) "Rename folder" else if (selectedDocuments.size > 1) "Rename $"+"{selectedDocuments.size} documents" else "Rename document") },
+        text = {
+            OutlinedTextField(value = renameText, onValueChange = { renameText = it }, singleLine = true,
+                label = { Text(if (selectedDocuments.size > 1 && !renameFolderMode) "Base name (numbered suffixes added)" else "Name") })
+        },
+        confirmButton = { TextButton(onClick = { renameSelectedItems() }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = { showRename = false }) { Text("Cancel") } }
+    )
+
+    transferMode?.let { mode ->
+        val destinations = listOf("") + documents.filter { it.isDirectory }.map { it.relativePath }.distinct().sorted()
+        AlertDialog(
+            onDismissRequest = { if (!isActionRunning) transferMode = null },
+            title = { Text("$"+"{mode} documents to") },
+            text = {
+                if (isActionRunning) CircularProgressIndicator(color = Color(0xFFFF4D7D))
+                else Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                    destinations.forEach { path ->
+                        TextButton(onClick = { moveOrCopyDocuments(path) }, modifier = Modifier.fillMaxWidth()) {
+                            Text(if (path.isBlank()) "Internal storage (root)" else path, modifier = Modifier.fillMaxWidth(),
+                                maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { transferMode = null }, enabled = !isActionRunning) { Text("Cancel") } }
+        )
+    }
+    if (isActionRunning) AlertDialog(
+        onDismissRequest = {},
+        title = { Text("Working…") },
+        text = { Row(verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(color = Color(0xFFFF4D7D), modifier = Modifier.size(28.dp))
+            Spacer(Modifier.width(14.dp))
+            Text("Updating your documents. Please keep instaGallery open.")
+        } },
+        confirmButton = {}
+    )
+    statusMessage?.let { message ->
+        AlertDialog(onDismissRequest = { statusMessage = null }, text = { Text(message) },
+            confirmButton = { TextButton(onClick = { statusMessage = null }) { Text("OK") } })
     }
 }
 
@@ -339,7 +680,13 @@ private fun EmptyDocumentsMessage(message: String) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun DocumentTile(document: BrowserDocument, showPath: Boolean, onClick: () -> Unit) {
+private fun DocumentTile(
+    document: BrowserDocument,
+    selected: Boolean,
+    showPath: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
     val icon = when {
         document.isDirectory -> Icons.Default.Folder
         document.extension == "pdf" -> Icons.Default.PictureAsPdf
@@ -354,44 +701,48 @@ private fun DocumentTile(document: BrowserDocument, showPath: Boolean, onClick: 
         document.extension in setOf("ppt", "pptx", "odp") -> Color(0xFFFFA45B)
         else -> Color(0xFF7AB7FF)
     }
-    // Match the Media folder tile proportions: a preview area, then name and metadata.
     Column(
         Modifier.fillMaxWidth()
+            .border(2.dp, if (selected) Color(0xFFFF4D7D) else Color.Transparent, MaterialTheme.shapes.medium)
             .background(Color(0xFF191919), MaterialTheme.shapes.medium)
-            .combinedClickable(onClick = onClick, onLongClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
     ) {
-        Box(
-            Modifier.fillMaxWidth().aspectRatio(1f).background(Color(0xFF242424)),
-            contentAlignment = Alignment.Center
-        ) {
+        Box(Modifier.fillMaxWidth().aspectRatio(1f).background(Color(0xFF242424)), contentAlignment = Alignment.Center) {
             Icon(icon, null, tint = tint, modifier = Modifier.size(48.dp))
-        }
-        Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp)) {
-            Text(
-                document.name,
-                color = Color.White,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                fontSize = 14.sp
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                if (document.isDirectory) "Folder" else document.extension.uppercase().ifBlank { "FILE" },
-                color = Color.LightGray,
-                fontSize = 11.sp
-            )
-            if (showPath && document.relativePath.isNotBlank()) {
-                Spacer(Modifier.height(3.dp))
-                Text(
-                    document.relativePath,
-                    color = Color.Gray,
-                    fontSize = 10.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+            if (selected) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopEnd) {
+                Surface(Modifier.padding(5.dp).size(23.dp), color = Color(0xFFFF4D7D), shape = CircleShape) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text("✓", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
             }
         }
+        Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp)) {
+            Text(document.name, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 2,
+                overflow = TextOverflow.Ellipsis, fontSize = 14.sp)
+            Spacer(Modifier.height(4.dp))
+            Text(if (document.isDirectory) "Folder" else document.extension.uppercase().ifBlank { "FILE" },
+                color = Color.LightGray, fontSize = 11.sp)
+            if (showPath && document.relativePath.isNotBlank()) {
+                Spacer(Modifier.height(3.dp))
+                Text(document.relativePath, color = Color.Gray, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+@Composable
+private fun DocumentBottomAction(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        IconButton(onClick = onClick, modifier = Modifier.size(38.dp)) {
+            Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(21.dp))
+        }
+        Text(label, color = Color.White, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Clip)
     }
 }
 
@@ -402,14 +753,14 @@ private fun scanDocuments(context: Context): Pair<List<BrowserDocument>, String?
         } else {
             MediaStore.MediaColumns.DATA
         }
-        val projection = arrayOf(
+        val projection = (listOf(
             MediaStore.Files.FileColumns._ID,
             MediaStore.MediaColumns.DISPLAY_NAME,
             MediaStore.MediaColumns.MIME_TYPE,
             MediaStore.MediaColumns.SIZE,
             MediaStore.MediaColumns.DATE_MODIFIED,
             pathColumn
-        )
+        ) + if (pathColumn == MediaStore.MediaColumns.DATA) emptyList() else listOf(MediaStore.MediaColumns.DATA)).distinct().toTypedArray()
         val files = mutableListOf<BrowserDocument>()
         // Build the folder tree from every indexed file, not only supported documents.
         // This keeps Doc > Folder visible like Media > Folder even when a directory
@@ -423,6 +774,7 @@ private fun scanDocuments(context: Context): Pair<List<BrowserDocument>, String?
             val sizeIndex = cursor.getColumnIndex(MediaStore.MediaColumns.SIZE)
             val dateIndex = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
             val pathIndex = cursor.getColumnIndex(pathColumn)
+            val absolutePathIndex = cursor.getColumnIndex(MediaStore.MediaColumns.DATA)
             if (idIndex < 0 || nameIndex < 0 || pathIndex < 0) {
                 return emptyList<BrowserDocument>() to "Android did not provide document metadata."
             }
@@ -453,7 +805,10 @@ private fun scanDocuments(context: Context): Pair<List<BrowserDocument>, String?
                         relativePath = relativePath,
                         size = if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) cursor.getLong(sizeIndex) else 0L,
                         modified = if (dateIndex >= 0 && !cursor.isNull(dateIndex)) cursor.getLong(dateIndex) else 0L,
-                        isDirectory = false
+                        isDirectory = false,
+                        absolutePath = if (absolutePathIndex >= 0 && !cursor.isNull(absolutePathIndex))
+                            cursor.getString(absolutePathIndex).orEmpty()
+                        else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) rawPath else ""
                     )
                 )
             }
