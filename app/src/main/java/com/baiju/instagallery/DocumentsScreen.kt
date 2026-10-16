@@ -1422,7 +1422,7 @@ private fun TextBasedDocumentReader(document: BrowserDocument) {
                 Text("This file could not be rendered.", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(8.dp))
                 Text(error ?: "The file may be damaged or use an unsupported format.", color = Color.LightGray)
-                if (document.extension in setOf("doc", "ppt")) {
+                if (document.extension == "doc") {
                     Spacer(Modifier.height(10.dp))
                     Text("This older binary Office format is not supported by the built-in reader. Save it as DOCX, XLSX, PPTX, or PDF.",
                         color = Color.LightGray, fontSize = 13.sp)
@@ -1501,15 +1501,11 @@ private fun readDocumentText(context: Context, document: BrowserDocument): Pair<
     }
     if (ext == "ppt") {
         return try {
+            // QuickButCruddyTextExtractor reads the legacy binary record stream directly.
+            // Unlike HSLFSlideShow's shape model, it avoids Android-missing java.awt APIs.
             val text = ByteArrayInputStream(bytes).use { input ->
-                org.apache.poi.hslf.usermodel.HSLFSlideShow(input).use { slideshow ->
-                    slideshow.slides.mapIndexed { index, slide ->
-                        val slideText = slide.shapes
-                            .filterIsInstance<org.apache.poi.hslf.usermodel.HSLFTextShape>()
-                            .mapNotNull { it.text?.takeIf(String::isNotBlank) }
-                            .joinToString("\n")
-                        "Slide ${index + 1}\n${slideText}"
-                    }.joinToString("\n\n")
+                org.apache.poi.hslf.extractor.QuickButCruddyTextExtractor(input).use { extractor ->
+                    extractor.textAsString
                 }
             }
             if (text.isBlank()) null to "No readable text was found in this PowerPoint presentation."
@@ -1517,9 +1513,7 @@ private fun readDocumentText(context: Context, document: BrowserDocument): Pair<
         } catch (e: Exception) {
             null to "Could not read this legacy PowerPoint .ppt file: " + (e.message ?: "unsupported or damaged file")
         } catch (e: LinkageError) {
-            // Some legacy POI HSLF dependencies can fail to link on Android at runtime.
-            // Convert that failure into an in-reader message instead of crashing the app.
-            null to "This legacy PowerPoint .ppt cannot be opened by the built-in reader on this device. Save it as .pptx or open it with a presentation app."
+            null to "Could not load the legacy PowerPoint text reader: " + (e.message ?: "missing Android-compatible dependency")
         }
     }
     return null to "This file format is not supported by the built-in reader yet."
