@@ -167,6 +167,7 @@ internal fun DocumentsScreen(
         .sortedBy { it.name.lowercase() }
     val selectableDocuments = if (viewMode == "all") allFiles else currentFiles
     val selectedDocuments = documents.filter { !it.isDirectory && it.uri in selectedUris }
+    val latestSelectedUris = rememberUpdatedState(selectedUris)
     val allVisibleSelected = selectableDocuments.isNotEmpty() && selectableDocuments.all { it.uri in selectedUris }
 
     fun fileForDocument(document: BrowserDocument): File {
@@ -546,7 +547,7 @@ internal fun DocumentsScreen(
                                 LazyVerticalGrid(
                                     state = mediaGridState,
                                     columns = GridCells.Fixed(activeColumns),
-                                    modifier = gridModifier.pointerInput(allFiles, mediaGridState, selectedUris) {
+                                    modifier = gridModifier.pointerInput(allFiles, mediaGridState) {
                                         awaitEachGesture {
                                             val down = awaitFirstDown(requireUnconsumed = false)
                                             var currentPosition = down.position
@@ -587,9 +588,10 @@ internal fun DocumentsScreen(
                                             if (completedBeforeLongPress != null) {
                                                 if (!multiTouchDetected && releasedEarly && !movedBeforeLongPress) {
                                                     documentAt(currentPosition)?.let { document ->
-                                                        selectedUris = if (selectedUris.isNotEmpty()) {
-                                                            if (document.uri in selectedUris) selectedUris - document.uri
-                                                            else selectedUris + document.uri
+                                                        val currentSelection = latestSelectedUris.value
+                                                        selectedUris = if (currentSelection.isNotEmpty()) {
+                                                            if (document.uri in currentSelection) currentSelection - document.uri
+                                                            else currentSelection + document.uri
                                                         } else {
                                                             openedDocument = document
                                                             emptySet()
@@ -597,7 +599,7 @@ internal fun DocumentsScreen(
                                                     }
                                                 }
                                             } else {
-                                                val dragSelection = selectedUris.toMutableSet()
+                                                val dragSelection = latestSelectedUris.value.toMutableSet()
                                                 var lastSelectedUri: Uri? = null
                                                 fun selectAt(position: androidx.compose.ui.geometry.Offset) {
                                                     val document = documentAt(position)
