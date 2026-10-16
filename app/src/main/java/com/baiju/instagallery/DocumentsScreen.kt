@@ -975,14 +975,16 @@ private fun BuiltInDocumentReader(document: BrowserDocument, onBack: () -> Unit)
             val intent = Intent(Intent.ACTION_VIEW).setDataAndType(document.uri, mime)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             try {
-                if (context.packageManager.resolveActivity(intent, 0) == null) {
-                    openError = "No compatible app is installed to open this original document."
-                } else {
-                    context.startActivity(intent)
-                    onBack()
-                }
+                // Use a chooser instead of resolveActivity(): Android package-visibility
+                // rules can make resolveActivity return null even when a viewer is installed.
+                context.startActivity(Intent.createChooser(intent, "Open ${document.extension.uppercase()} with"))
+                onBack()
             } catch (e: Exception) {
-                openError = "Could not open the original file. Install a compatible document viewer and try again."
+                openError = when (document.extension) {
+                    "xls" -> "No app could open this Excel .xls file. Install Microsoft Excel or Google Sheets, then try again."
+                    "ppt" -> "No app could open this PowerPoint .ppt file. Install Microsoft PowerPoint or Google Slides, then try again."
+                    else -> "Could not open the original file. Install a compatible document viewer and try again."
+                }
             }
         }
     }
