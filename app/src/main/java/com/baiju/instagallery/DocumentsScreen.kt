@@ -85,6 +85,7 @@ private val supportedDocumentExtensions = setOf(
     "md", "log", "html", "htm", "xml", "json", "yaml", "yml", "odt", "ods", "odp"
 )
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun DocumentsScreen(
     hasAccess: Boolean,
