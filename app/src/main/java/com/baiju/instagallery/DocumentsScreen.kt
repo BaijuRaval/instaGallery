@@ -1014,6 +1014,9 @@ private fun PdfDocumentReader(uri: Uri) {
     var error by remember(uri) { mutableStateOf<String?>(null) }
     var zoom by remember(uri) { mutableFloatStateOf(1f) }
     var translation by remember(uri) { mutableStateOf(Offset.Zero) }
+    // Keep rendered page bitmaps outside LazyColumn items. Lazy items leave composition
+    // when off-screen; this cache prevents their PDF pages being rendered again on return.
+    val renderedPages = remember(uri) { mutableStateMapOf<Int, Bitmap>() }
     val pdfListState = rememberLazyListState()
 
     LaunchedEffect(uri) {
@@ -1153,7 +1156,12 @@ private fun PdfDocumentReader(uri: Uri) {
                 contentPadding = PaddingValues(bottom = 18.dp)
             ) {
                 items((0 until pageCount).toList(), key = { it }) { pageIndex ->
-                    PdfPageContent(uri = uri, pageIndex = pageIndex)
+                    PdfPageContent(
+                        uri = uri,
+                        pageIndex = pageIndex,
+                        cachedBitmap = renderedPages[pageIndex],
+                        onBitmapReady = { renderedPages[pageIndex] = it }
+                    )
                 }
             }
         }
@@ -1163,13 +1171,19 @@ private fun PdfDocumentReader(uri: Uri) {
 @Composable
 private fun PdfPageContent(
     uri: Uri,
-    pageIndex: Int
+    pageIndex: Int,
+    cachedBitmap: Bitmap?,
+    onBitmapReady: (Bitmap) -> Unit
 ) {
     val context = LocalContext.current
-    var bitmap by remember(uri, pageIndex) { mutableStateOf<Bitmap?>(null) }
     var error by remember(uri, pageIndex) { mutableStateOf<String?>(null) }
-    var loading by remember(uri, pageIndex) { mutableStateOf(true) }
-    LaunchedEffect(uri, pageIndex) {
+    var loading by remember(uri, pageIndex) { mutableStateOf(cachedBitmap == null) }
+
+    LaunchedEffect(uri, pageIndex, cachedBitmap != null) {
+        if (cachedBitmap != null) {
+            loading = false
+            return@LaunchedEffect
+        }
         loading = true
         val result = withContext(Dispatchers.IO) {
             try {
@@ -1195,14 +1209,14 @@ private fun PdfPageContent(
                 null
             }
         }
-        bitmap = result
+        if (result != null) onBitmapReady(result)
         loading = false
     }
 
     Box(Modifier.fillMaxWidth().padding(vertical = 1.dp)) {
         when {
-            bitmap != null -> Image(
-                bitmap = bitmap!!.asImageBitmap(),
+            cachedBitmap != null -> Image(
+                bitmap = cachedBitmap.asImageBitmap(),
                 contentDescription = "PDF page ${pageIndex + 1}",
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp, vertical = 3.dp)
                     .background(Color.White)
