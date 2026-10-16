@@ -1007,6 +1007,7 @@ private fun PdfDocumentReader(uri: Uri) {
     var loading by remember(uri) { mutableStateOf(true) }
     var error by remember(uri) { mutableStateOf<String?>(null) }
     var zoom by remember(uri) { mutableFloatStateOf(1f) }
+    var isPinching by remember(uri) { mutableStateOf(false) }
     val pdfListState = rememberLazyListState()
     val pdfHorizontalScrollState = rememberScrollState()
     val gestureScope = rememberCoroutineScope()
@@ -1047,30 +1048,36 @@ private fun PdfDocumentReader(uri: Uri) {
                         pass = PointerEventPass.Initial
                     )
                     var previousDistance = 0f
-                    var pinching = false
+                    var didPinch = false
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
                         val pointers = event.changes.filter { it.pressed }
                         if (pointers.isEmpty()) break
                         if (pointers.size >= 2) {
-                            val first = pointers[0]
-                            val second = pointers[1]
-                            val distance = (first.position - second.position).getDistance()
+                            if (!didPinch) {
+                                didPinch = true
+                                isPinching = true
+                                gestureScope.launch { pdfHorizontalScrollState.scrollTo(0) }
+                            }
+                            val distance = (pointers[0].position - pointers[1].position).getDistance()
                             if (previousDistance > 1f && distance > 1f) {
                                 val factor = distance / previousDistance
-                                if (kotlin.math.abs(factor - 1f) > 0.002f) {
+                                if (kotlin.math.abs(factor - 1f) > 0.001f) {
                                     zoom = (zoom * factor).coerceIn(0.5f, 4f)
-                                    pinching = true
                                 }
                             }
                             previousDistance = distance
-                            // Read pinch events before nested scrolling can consume them.
-                            pointers.forEach { it.consume() }
+                            // Consume every current pointer change so nested scroll cannot pan
+                            // the document while a pinch is in progress.
+                            event.changes.forEach { it.consume() }
                         } else {
                             previousDistance = 0f
                         }
                     }
-                    if (pinching) gestureScope.launch { pdfHorizontalScrollState.scrollTo(0) }
+                    if (didPinch) {
+                        isPinching = false
+                        gestureScope.launch { pdfHorizontalScrollState.scrollTo(0) }
+                    }
                 }
             }
         ) {
@@ -1079,7 +1086,7 @@ private fun PdfDocumentReader(uri: Uri) {
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val documentWidth = maxWidth * zoom
                 Row(
-                    Modifier.fillMaxSize().horizontalScroll(pdfHorizontalScrollState),
+                    Modifier.fillMaxSize().horizontalScroll(pdfHorizontalScrollState, enabled = !isPinching),
                     horizontalArrangement = Arrangement.Start
                 ) {
                     LazyColumn(
