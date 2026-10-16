@@ -877,28 +877,50 @@ private fun GalleryApp() {
                 }
             }
         } else {
-            Column(Modifier.fillMaxSize().background(Color(0xFF101010)).statusBarsPadding().pointerInput(tab, selected, selectedFolder, transferMode, mainMenuOpen) {
+            Column(Modifier.fillMaxSize().background(Color(0xFF101010)).statusBarsPadding().pointerInput(tab, menuScope, menuContent, documentFolderMode, documentViewerOpen, selected, selectedFolder, transferMode, mainMenuOpen) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
-                    var horizontalSwipe = false
                     var multiTouchSwipe = false
-                    var lastDx = 0f
+                    var deltaX = 0f
+                    var deltaY = 0f
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Final)
                         val pressed = event.changes.filter { it.pressed }
                         if (pressed.size >= 2) multiTouchSwipe = true
-                        val change = event.changes.firstOrNull { it.id == down.id }
-                        if (change == null) break
-                        lastDx = change.position.x - down.position.x
-                        val totalDy = change.position.y - down.position.y
-                        if (!multiTouchSwipe && kotlin.math.abs(lastDx) > viewConfiguration.touchSlop && kotlin.math.abs(lastDx) > kotlin.math.abs(totalDy) * 1.25f) {
-                            horizontalSwipe = true
-                        }
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        deltaX = change.position.x - down.position.x
+                        deltaY = change.position.y - down.position.y
                         if (!change.pressed) {
-                            if (horizontalSwipe && !multiTouchSwipe && selected.isEmpty() && selectedFolder == null && transferMode == null && !mainMenuOpen) {
-                                tab = if (tab == "Folders") "Reel" else "Folders"
+                            val deliberateSwipeThreshold = maxOf(viewConfiguration.touchSlop * 1.8f, 48.dp.toPx())
+                            if (!multiTouchSwipe && kotlin.math.abs(deltaX) >= deliberateSwipeThreshold &&
+                                kotlin.math.abs(deltaX) > kotlin.math.abs(deltaY) * 1.4f &&
+                                selected.isEmpty() && selectedFolder == null && transferMode == null &&
+                                !mainMenuOpen && !documentViewerOpen
+                            ) {
+                                // Cycle: Media Folder -> Media All -> Doc Folder -> Doc All -> Media Folder.
+                                val currentIndex = when {
+                                    menuContent == "Media" && menuScope == "Folder" -> 0
+                                    menuContent == "Media" && menuScope == "All" -> 1
+                                    menuContent == "Doc" && menuScope == "Folder" -> 2
+                                    else -> 3
+                                }
+                                val nextIndex = if (deltaX < 0f) (currentIndex + 1) % 4 else (currentIndex + 3) % 4
+                                menuContent = if (nextIndex < 2) "Media" else "Doc"
+                                menuScope = if (nextIndex == 0 || nextIndex == 2) "Folder" else "All"
+                                documentFolderMode = menuContent == "Doc" && menuScope == "Folder"
+                                tab = when {
+                                    menuContent == "Doc" -> "Documents"
+                                    menuScope == "Folder" -> "Folders"
+                                    else -> "Reel"
+                                }
                                 selectedAlbum = "All media"
                                 selected = emptySet()
+                                selectedFolder = null
+                                if (tab == "Documents") {
+                                    viewerStartUri = null
+                                    viewerDisplayUri = null
+                                    viewerCurrentUri = null
+                                }
                             }
                             break
                         }
@@ -953,7 +975,7 @@ private fun GalleryApp() {
                                     tab == "Folders" -> "Folder"
                                     tab == "Images" -> "Images"
                                     tab == "Videos" -> "Videos"
-                                    else -> "Reel"
+                                    else -> "All"
                                 },
                                 subtitle = if (transferMode != null) "${transferMode} to a folder" else "${visible.size} items",
                                 onOpenMenu = { mainMenuOpen = true }
