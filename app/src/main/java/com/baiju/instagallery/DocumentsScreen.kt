@@ -1516,6 +1516,10 @@ private fun readDocumentText(context: Context, document: BrowserDocument): Pair<
             else text to null
         } catch (e: Exception) {
             null to "Could not read this legacy PowerPoint .ppt file: " + (e.message ?: "unsupported or damaged file")
+        } catch (e: LinkageError) {
+            // Some legacy POI HSLF dependencies can fail to link on Android at runtime.
+            // Convert that failure into an in-reader message instead of crashing the app.
+            null to "This legacy PowerPoint .ppt cannot be opened by the built-in reader on this device. Save it as .pptx or open it with a presentation app."
         }
     }
     return null to "This file format is not supported by the built-in reader yet."
