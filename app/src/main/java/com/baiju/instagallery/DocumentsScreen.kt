@@ -53,6 +53,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.awaitPointerEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.zIndex
 import androidx.compose.foundation.shape.CircleShape
@@ -94,6 +95,7 @@ internal fun DocumentsScreen(
     initialViewMode: String = "all",
     onDocumentOpenChanged: (Boolean) -> Unit = {},
     onOpenMenu: () -> Unit = {},
+    onSwipeModeChange: (swipeLeft: Boolean) -> Unit = {},
     mediaGridColumns: Int = 3,
     folderGridColumns: Int = 2,
     mediaGridState: LazyGridState,
@@ -147,7 +149,35 @@ internal fun DocumentsScreen(
         return
     }
 
-    Column(Modifier.fillMaxSize().background(Color(0xFF101010)).statusBarsPadding().navigationBarsPadding()) {
+    Column(
+        Modifier.fillMaxSize().background(Color(0xFF101010)).statusBarsPadding().navigationBarsPadding()
+            .pointerInput(viewMode, currentFolder, openedDocument, hasAccess) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    var multiTouchSwipe = false
+                    var deltaX = 0f
+                    var deltaY = 0f
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Final)
+                        val pressed = event.changes.filter { it.pressed }
+                        if (pressed.size >= 2) multiTouchSwipe = true
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        deltaX = change.position.x - down.position.x
+                        deltaY = change.position.y - down.position.y
+                        if (!change.pressed) {
+                            val deliberateSwipeThreshold = maxOf(viewConfiguration.touchSlop * 1.8f, 48.dp.toPx())
+                            if (!multiTouchSwipe && kotlin.math.abs(deltaX) >= deliberateSwipeThreshold &&
+                                kotlin.math.abs(deltaX) > kotlin.math.abs(deltaY) * 1.4f &&
+                                currentFolder.isBlank() && openedDocument == null && hasAccess
+                            ) {
+                                onSwipeModeChange(deltaX < 0f)
+                            }
+                            break
+                        }
+                    }
+                }
+            }
+    ) {
         GalleryHeader(
             title = when {
                 currentFolder.isNotBlank() -> currentFolder.substringAfterLast('/')
@@ -403,15 +433,16 @@ private fun scanDocuments(context: Context): Pair<List<BrowserDocument>, String?
                     context,
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) rawPath else rawPath.substringBeforeLast('/')
                 )
+                val extension = name.substringAfterLast('.', "").lowercase()
+                if (extension !in supportedDocumentExtensions) continue
+
+                // Only create folders that contain supported documents (or their parents).
                 val segments = relativePath.split('/').filter { it.isNotBlank() }
                 var folderPath = ""
                 segments.forEach { segment ->
                     folderPath = if (folderPath.isBlank()) segment else "$folderPath/$segment"
                     folderPaths.add(folderPath)
                 }
-
-                val extension = name.substringAfterLast('.', "").lowercase()
-                if (extension !in supportedDocumentExtensions) continue
                 val id = cursor.getLong(idIndex)
                 files.add(
                     BrowserDocument(
