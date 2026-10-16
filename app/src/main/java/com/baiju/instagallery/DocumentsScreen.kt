@@ -1504,8 +1504,11 @@ private fun readDocumentText(context: Context, document: BrowserDocument): Pair<
             // QuickButCruddyTextExtractor reads the legacy binary record stream directly.
             // Unlike HSLFSlideShow's shape model, it avoids Android-missing java.awt APIs.
             val text = ByteArrayInputStream(bytes).use { input ->
-                org.apache.poi.hslf.extractor.QuickButCruddyTextExtractor(input).use { extractor ->
-                    extractor.textAsString
+                val extractor = org.apache.poi.hslf.extractor.QuickButCruddyTextExtractor(input)
+                try {
+                    extractor.getTextAsString()
+                } finally {
+                    extractor.close()
                 }
             }
             if (text.isBlank()) null to "No readable text was found in this PowerPoint presentation."
