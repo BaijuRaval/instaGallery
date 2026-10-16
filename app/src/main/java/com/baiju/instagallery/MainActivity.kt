@@ -708,7 +708,7 @@ private fun GalleryApp() {
     val hasInnerScreen = viewerStartUri != null || mainMenuOpen || actionMenu || manageMediaInfoOpen || albumMenu ||
         infoItem != null || renameItem != null || renameMultipleItems.isNotEmpty() || statusMessage != null || transferMode != null ||
         selected.isNotEmpty() || selectedFolder != null || settingsPage != null || folderRemoveTarget != null ||
-        (tab == "Folders" && selectedAlbum != "All media") || tab != "Reel"
+        (tab == "Folders" && selectedAlbum != "All media") || tab != "Reel" || menuContent != "Media"
     BackHandler(enabled = hasInnerScreen) {
         when {
             mainMenuOpen -> mainMenuOpen = false
@@ -732,6 +732,12 @@ private fun GalleryApp() {
             selected.isNotEmpty() -> selected = emptySet()
             selectedFolder != null -> selectedFolder = null
             tab == "Folders" && selectedAlbum != "All media" -> selectedAlbum = "All media"
+            menuContent != "Media" && tab == "Reel" -> {
+                menuContent = "Media"
+                menuScope = "All"
+                selectedAlbum = "All media"
+                selected = emptySet()
+            }
             tab != "Reel" -> {
                 val returnToFolders = tab == "Documents" && menuScope == "Folder"
                 tab = if (returnToFolders) "Folders" else "Reel"
