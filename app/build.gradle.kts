@@ -47,8 +47,10 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.documentfile:documentfile:1.0.1")
-    // Android-compatible POI fork with HSLF drawing support for legacy binary PowerPoint .ppt files.
-    implementation("io.github.jiangjm424:poi-android:3.12")
+    // Apache POI HWPF extracts text from legacy binary Word .doc files.
+    implementation("org.apache.poi:poi:5.3.0")
+    implementation("org.apache.poi:poi-scratchpad:5.3.0")
+    // Apache POI HSLF extracts text from legacy binary PowerPoint .ppt files.
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("io.coil-kt:coil-video:2.7.0")
     implementation("androidx.media3:media3-exoplayer:1.5.1")
