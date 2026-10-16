@@ -82,6 +82,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import org.apache.poi.hssf.usermodel.HSSFWorkbook
+import org.apache.poi.ss.usermodel.DataFormatter
 import org.apache.poi.hwpf.HWPFDocument
 import org.apache.poi.hwpf.extractor.WordExtractor
 import java.io.File
@@ -1359,7 +1361,7 @@ private fun TextBasedDocumentReader(document: BrowserDocument) {
                 Text("This file could not be rendered.", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(8.dp))
                 Text(error ?: "The file may be damaged or use an unsupported format.", color = Color.LightGray)
-                if (document.extension in setOf("doc", "xls", "ppt")) {
+                if (document.extension in setOf("doc", "ppt")) {
                     Spacer(Modifier.height(10.dp))
                     Text("This older binary Office format is not supported by the built-in reader. Save it as DOCX, XLSX, PPTX, or PDF.",
                         color = Color.LightGray, fontSize = 13.sp)
@@ -1412,7 +1414,31 @@ private fun readDocumentText(context: Context, document: BrowserDocument): Pair<
             null to "Could not read this legacy Word .doc file: " + (e.message ?: "unsupported or damaged file")
         }
     }
-    if (ext in setOf("xls", "ppt")) return null to "This older binary Office format is not supported by the built-in reader yet."
+    if (ext == "xls") {
+        return try {
+            val text = ByteArrayInputStream(bytes).use { input ->
+                HSSFWorkbook(input).use { workbook ->
+                    val formatter = DataFormatter()
+                    val evaluator = workbook.creationHelper.createFormulaEvaluator()
+                    (0 until workbook.numberOfSheets).joinToString("\\n\\n") { sheetIndex ->
+                        val sheet = workbook.getSheetAt(sheetIndex)
+                        val rows = (sheet.firstRowNum..sheet.lastRowNum).mapNotNull { rowIndex ->
+                            val row = sheet.getRow(rowIndex) ?: return@mapNotNull null
+                            val values = (0 until (row.lastCellNum.toInt().coerceAtLeast(0))).map { cellIndex ->
+                                formatter.formatCellValue(row.getCell(cellIndex), evaluator)
+                            }
+                            if (values.all { it.isBlank() }) null else values.joinToString("    ").trimEnd()
+                        }
+                        "Sheet " + (sheetIndex + 1) + "\\n" + rows.joinToString("\\n")
+                    }
+                }
+            }
+            if (text.isBlank()) null to "No readable data was found in this Excel workbook." else text to null
+        } catch (e: Exception) {
+            null to "Could not read this legacy Excel .xls file: " + (e.message ?: "unsupported or damaged file")
+        }
+    }
+    if (ext == "ppt") return null to "This older binary PowerPoint format is not supported by the built-in reader yet."
     return null to "This file format is not supported by the built-in reader yet."
 }
 
