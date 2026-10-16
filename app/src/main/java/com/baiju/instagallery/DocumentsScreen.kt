@@ -28,6 +28,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -56,6 +57,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.graphicsLayer
@@ -1010,7 +1013,7 @@ private fun PdfDocumentReader(uri: Uri) {
     var loading by remember(uri) { mutableStateOf(true) }
     var error by remember(uri) { mutableStateOf<String?>(null) }
     var zoom by remember(uri) { mutableFloatStateOf(1f) }
-    var offsetX by remember(uri) { mutableFloatStateOf(0f) }
+    var translation by remember(uri) { mutableStateOf(Offset.Zero) }
     val pdfListState = rememberLazyListState()
 
     LaunchedEffect(uri) {
@@ -1041,89 +1044,54 @@ private fun PdfDocumentReader(uri: Uri) {
         error != null -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
             Text(error.orEmpty(), color = Color.White)
         }
-        else -> Box(
-            Modifier.fillMaxSize().pointerInput(Unit) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(
-                        requireUnconsumed = false,
-                        pass = PointerEventPass.Initial
-                    )
-                    var previousDistance = 0f
-                    var previousSingleX = down.position.x
-                    var previousSingleY = down.position.y
-                    var isPanning = false
-                    var didPinch = false
-                    while (true) {
-                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                        val pointers = event.changes.filter { it.pressed }
-                        if (pointers.isEmpty()) break
-                        if (pointers.size >= 2) {
-                            didPinch = true
-                            val first = pointers[0].position
-                            val second = pointers[1].position
-                            val distance = (first - second).getDistance()
-                            val pivotX = (first.x + second.x) / 2f
-                            if (previousDistance > 1f && distance > 1f) {
-                                val oldZoom = zoom
-                                val newZoom = (oldZoom * distance / previousDistance).coerceIn(0.5f, 4f)
-                                if (kotlin.math.abs(newZoom - oldZoom) > 0.001f) {
-                                    // Keep the content beneath the fingers anchored while zooming.
-                                    val anchoredOffset = pivotX - (pivotX - offsetX) * (newZoom / oldZoom)
-                                    zoom = newZoom
-                                    val minOffset = (size.width.toFloat() * (1f - newZoom)).coerceAtMost(0f)
-                                    offsetX = anchoredOffset.coerceIn(minOffset, 0f)
-                                }
-                            }
-                            previousDistance = distance
-                            // A pinch must never be interpreted as a horizontal drag by the page list.
-                            event.changes.forEach { it.consume() }
-                        } else {
-                            previousDistance = 0f
-                            val change = pointers.first()
-                            val dx = change.position.x - previousSingleX
-                            val dy = change.position.y - previousSingleY
-                            val totalX = change.position.x - down.position.x
-                            val totalY = change.position.y - down.position.y
-                            if (!didPinch && zoom > 1.001f) {
-                                if (!isPanning &&
-                                    kotlin.math.abs(totalX) > viewConfiguration.touchSlop &&
-                                    kotlin.math.abs(totalX) > kotlin.math.abs(totalY) * 1.2f
-                                ) isPanning = true
-                                if (isPanning) {
-                                    val minOffset = (size.width.toFloat() * (1f - zoom)).coerceAtMost(0f)
-                                    offsetX = (offsetX + dx).coerceIn(minOffset, 0f)
-                                    change.consume()
-                                }
-                            }
-                            previousSingleX = change.position.x
-                            previousSingleY = change.position.y
+        else -> BoxWithConstraints(
+            Modifier.fillMaxSize().clipToBounds()
+                .pointerInput(Unit) {
+                    detectTransformGestures(panZoomLock = true) { centroid, pan, gestureZoom, _ ->
+                        val oldScale = zoom
+                        // Do not allow the document to shrink below its fitted initial size.
+                        val newScale = (oldScale * gestureZoom).coerceIn(1f, 4f)
+                        if (newScale != oldScale) {
+                            // Keep the document point under the fingers fixed during the pinch.
+                            val scaleRatio = newScale / oldScale
+                            val proposedX = centroid.x - (centroid.x - translation.x) * scaleRatio
+                            val proposedY = centroid.y - (centroid.y - translation.y) * scaleRatio
+                            val maxX = size.width * (1f - newScale)
+                            val maxY = size.height * (1f - newScale)
+                            translation = Offset(
+                                proposedX.coerceIn(maxX, 0f),
+                                proposedY.coerceIn(maxY, 0f)
+                            )
+                            zoom = newScale
+                        } else if (oldScale > 1f) {
+                            val maxX = size.width * (1f - oldScale)
+                            val maxY = size.height * (1f - oldScale)
+                            translation = Offset(
+                                (translation.x + pan.x).coerceIn(maxX, 0f),
+                                (translation.y + pan.y).coerceIn(maxY, 0f)
+                            )
                         }
                     }
                 }
-            }
         ) {
-            // Keep the viewport clipped. The disabled horizontalScroll wrapper supplies
-            // unbounded width constraints to the canvas, but cannot intercept/pan touch gestures.
-            // Pinch and deliberate one-finger horizontal panning are handled by the parent above.
-            BoxWithConstraints(Modifier.fillMaxSize().clipToBounds()) {
-                val documentWidth = maxWidth * zoom
-                Row(
-                    Modifier.fillMaxSize().horizontalScroll(rememberScrollState(), enabled = false),
-                    horizontalArrangement = Arrangement.Start
-                ) {
-                    LazyColumn(
-                        state = pdfListState,
-                        modifier = Modifier.offset { IntOffset(offsetX.roundToInt(), 0) }
-                            .requiredWidth(documentWidth).fillMaxHeight(),
-                        contentPadding = PaddingValues(bottom = 18.dp)
-                    ) {
-                        items((0 until pageCount).toList(), key = { it }) { pageIndex ->
-                            PdfPageContent(uri = uri, pageIndex = pageIndex)
-                        }
-                    }
+            // Scale the rendered PDF layer itself. Changing layout width under a LazyColumn's
+            // constraints can leave the page fitted or cause the pinch direction to feel inverted.
+            LazyColumn(
+                state = pdfListState,
+                modifier = Modifier.fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = zoom
+                        scaleY = zoom
+                        translationX = translation.x
+                        translationY = translation.y
+                        transformOrigin = TransformOrigin(0f, 0f)
+                    },
+                contentPadding = PaddingValues(bottom = 18.dp)
+            ) {
+                items((0 until pageCount).toList(), key = { it }) { pageIndex ->
+                    PdfPageContent(uri = uri, pageIndex = pageIndex)
                 }
             }
-            // PDF zoom is gesture-only; the same zoom value scales every page together.
         }
     }
 }
