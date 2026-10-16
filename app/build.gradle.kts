@@ -50,6 +50,7 @@ dependencies {
     // Apache POI HWPF extracts text from legacy binary Word .doc files.
     implementation("org.apache.poi:poi:5.3.0")
     implementation("org.apache.poi:poi-scratchpad:5.3.0")
+    // Apache POI HSLF extracts text from legacy binary PowerPoint .ppt files.
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("io.coil-kt:coil-video:2.7.0")
     implementation("androidx.media3:media3-exoplayer:1.5.1")
