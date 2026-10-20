@@ -174,19 +174,12 @@ private fun simpleFadeTransition() =
 internal fun GalleryHeader(
     title: String,
     subtitle: String,
-    onOpenMenu: () -> Unit,
-    showMenu: Boolean = true
+    onOpenSettings: () -> Unit
 ) {
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        if (showMenu) {
-            IconButton(onClick = onOpenMenu) {
-                Icon(Icons.Default.Menu, "Open menu", tint = Color.White, modifier = Modifier.size(27.dp))
-            }
-            Spacer(Modifier.width(4.dp))
-        }
         Column(Modifier.weight(1f)) {
             Text(
                 title,
@@ -197,6 +190,14 @@ internal fun GalleryHeader(
                 overflow = TextOverflow.Ellipsis
             )
             Text(subtitle, color = Color.LightGray, fontSize = 12.sp)
+        }
+        IconButton(onClick = onOpenSettings) {
+            Icon(
+                Icons.Default.Settings,
+                contentDescription = "Open settings",
+                tint = Color.White,
+                modifier = Modifier.size(25.dp)
+            )
         }
     }
 }
@@ -923,18 +924,9 @@ private fun GalleryApp() {
                         }
                         else -> {
                             GalleryHeader(
-                                title = when {
-                                    transferMode != null -> "Choose destination"
-                                    tab == "Folders" && selectedAlbum != "All media" -> selectedAlbum
-                                    tab == "Folders" -> "Video folders"
-                                    tab == "Images" -> "Images"
-                                    tab == "Videos" -> "Videos"
-                                    menuContent == "Audio" -> "Audio"
-                                    else -> "All"
-                                },
-                                subtitle = if (transferMode != null) "${transferMode} to a folder" else if (tab == "Folders" && selectedAlbum == "All media") "Folders containing videos" else "${visible.size} videos",
-                                onOpenMenu = { },
-                                showMenu = false
+                                title = "ViDO",
+                                subtitle = "${media.count { it.isVideo }} videos",
+                                onOpenSettings = { settingsPage = "main" }
                             )
                         }
                     }
