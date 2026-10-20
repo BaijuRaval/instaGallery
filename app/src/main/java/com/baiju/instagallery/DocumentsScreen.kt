@@ -650,8 +650,7 @@ internal fun DocumentsScreen(
                                                             if (document.uri in currentSelection) currentSelection - document.uri
                                                             else currentSelection + document.uri
                                                         } else {
-                                                            openedDocument = document
-                                                            emptySet()
+                                                            setOf(document.uri)
                                                         }
                                                     }
                                                 }
