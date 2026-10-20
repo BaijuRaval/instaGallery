@@ -931,9 +931,15 @@ private fun GalleryApp() {
                             }
                         }
                         else -> {
+                            val isInsideVideoFolder = tab == "Folders" && selectedAlbum != "All media"
+                            val headerVideoCount = if (isInsideVideoFolder) {
+                                media.count { it.isVideo && it.album == selectedAlbum }
+                            } else {
+                                media.count { it.isVideo }
+                            }
                             GalleryHeader(
-                                title = "ViDO",
-                                subtitle = "${media.count { it.isVideo }} videos",
+                                title = if (isInsideVideoFolder) selectedAlbum else "ViDO",
+                                subtitle = "$headerVideoCount videos",
                                 onOpenSettings = { settingsPage = "main" }
                             )
                         }
