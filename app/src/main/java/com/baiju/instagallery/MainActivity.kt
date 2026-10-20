@@ -917,7 +917,7 @@ private fun GalleryApp() {
                                 }
                                 Column(Modifier.weight(1f)) {
                                     Text(folderName, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text("Folder selected • ${media.count { it.album == folderName }} items", color = Color.LightGray, fontSize = 12.sp)
+                                    Text("Folder selected • ${media.count { it.album == folderName && it.isVideo }} videos", color = Color.LightGray, fontSize = 12.sp)
                                 }
                             }
                         }
@@ -1248,17 +1248,17 @@ private fun GalleryApp() {
             folderRemoveTarget?.let { folderName ->
                 AlertDialog(
                     onDismissRequest = { folderRemoveTarget = null },
-                    title = { Text("Delete media in folder?") },
+                    title = { Text("Delete videos in folder?") },
                     text = {
-                        Text("Delete all photos and videos inside \"${folderName}\"? Only images and videos will be deleted. Other file types and the folder itself will be left untouched.")
+                        Text("Delete all videos inside \"${folderName}\"? Photos, documents, audio, and the folder itself will be left untouched.")
                     },
                     confirmButton = {
                         TextButton(onClick = {
-                            val folderMedia = media.filter { it.album == folderName }
+                            val folderMedia = media.filter { it.album == folderName && it.isVideo }
                             folderRemoveTarget = null
                             selectedFolder = null
                             if (folderMedia.isNotEmpty()) deleteMedia(folderMedia)
-                        }) { Text("Delete photos & videos", color = Color(0xFFFF6680)) }
+                        }) { Text("Delete videos", color = Color(0xFFFF6680)) }
                     },
                     dismissButton = { TextButton(onClick = { folderRemoveTarget = null }) { Text("Cancel") } }
                 )
@@ -1270,7 +1270,7 @@ private fun GalleryApp() {
                     text = {
                         Column {
                             Text("Name: $folderName")
-                            Text("Items: ${media.count { it.album == folderName }}")
+                            Text("Videos: ${media.count { it.album == folderName && it.isVideo }}")
                             Text("Visibility: ${if (folderName in hiddenFolders) "Hidden" else "Visible"}")
                             Text("Files remain on your device; hiding only removes this folder from instaGallery.")
                         }
