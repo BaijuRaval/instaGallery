@@ -243,6 +243,9 @@ private fun GalleryApp() {
     var rememberLastPlayed by remember(context) {
         mutableStateOf(settingsPrefs.getBoolean("remember_last_played", false))
     }
+    var backgroundPlay by remember(context) {
+        mutableStateOf(settingsPrefs.getBoolean("background_play", false))
+    }
     var tab by remember { mutableStateOf("Folders") }
     var menuScope by remember { mutableStateOf("Folder") }
     var menuContent by remember { mutableStateOf("Media") }
@@ -757,6 +760,11 @@ private fun GalleryApp() {
                 hiddenFolders = hiddenFolders,
                 autoPlayNext = autoPlayNext,
                 rememberLastPlayed = rememberLastPlayed,
+                backgroundPlay = backgroundPlay,
+                onToggleBackgroundPlay = { enabled ->
+                    backgroundPlay = enabled
+                    settingsPrefs.edit().putBoolean("background_play", enabled).apply()
+                },
                 onToggleAutoPlayNext = { enabled ->
                     autoPlayNext = enabled
                     settingsPrefs.edit().putBoolean("auto_play_next", enabled).apply()
@@ -1467,6 +1475,8 @@ private fun SettingsScreen(
     hiddenFolders: Set<String>,
     autoPlayNext: Boolean,
     rememberLastPlayed: Boolean,
+    backgroundPlay: Boolean,
+    onToggleBackgroundPlay: (Boolean) -> Unit,
     onToggleAutoPlayNext: (Boolean) -> Unit,
     onToggleRememberLastPlayed: (Boolean) -> Unit,
     onBack: () -> Unit,
@@ -1539,6 +1549,16 @@ private fun SettingsScreen(
                     }
                 }
                 Spacer(Modifier.height(18.dp))
+                PlaybackSettingRow(
+                    title = "Background play",
+                    subtitle = if (backgroundPlay) {
+                        "On: keep video audio playing when you leave the app"
+                    } else {
+                        "Off: pause playback when the app goes into the background"
+                    },
+                    checked = backgroundPlay,
+                    onCheckedChange = onToggleBackgroundPlay
+                )
                 PlaybackSettingRow(
                     title = "Auto-play next / Loop current",
                     subtitle = if (autoPlayNext) {
@@ -2258,7 +2278,12 @@ private fun VideoPage(
 
     DisposableEffect(player, lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_PAUSE) player.pause()
+            if (event == Lifecycle.Event.ON_PAUSE) {
+                val keepPlayingInBackground = context.getSharedPreferences(
+                    "instagallery_settings", Context.MODE_PRIVATE
+                ).getBoolean("background_play", false)
+                if (!keepPlayingInBackground) player.pause()
+            }
             if (event == Lifecycle.Event.ON_RESUME && active) player.playWhenReady = true
         }
         lifecycleOwner.lifecycle.addObserver(observer)
