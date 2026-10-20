@@ -500,7 +500,7 @@ internal fun DocumentsScreen(
                     viewMode == "folders" -> "${childFolders.size} folders"
                     else -> "${allFiles.size} documents"
                 },
-                onOpenMenu = { /* Folder-only view: no All/Folder or media-type tabs. */ }
+                onOpenSettings = { }
             )
         }
 
