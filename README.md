@@ -4,10 +4,12 @@ A local-first Android video browser.
 
 ## Current interface
 - Opens directly into folders that contain videos.
-- Opening a folder shows only its videos.
+- Opening a folder shows only its videos, with the folder name and video count in the header.
 - Tapping a video opens the built-in video player; playback stays within the selected folder.
 - Photos, documents, and audio files are excluded from the browsing and viewing interface.
 - Folder and video file-management actions remain available where supported.
+- The home header shows the total video count and a Settings shortcut.
+- Settings includes a background-playback toggle for the built-in player.
 - Files are accessed locally on the device.
 
 ## Build
