@@ -2042,7 +2042,8 @@ private fun ReelsViewer(
                             scope.launch {
                                 val current = pagerState.currentPage
                                 if (!pagerState.isScrollInProgress && !currentMediaZoomed) {
-                                    pagerState.animateScrollToPage(if (current < items.lastIndex) current + 1 else 0)
+                                    // Avoid frame-dependent animation: autoplay must advance even while backgrounded.
+                                    pagerState.scrollToPage(if (current < items.lastIndex) current + 1 else 0)
                                 }
                             }
                         }
