@@ -451,7 +451,7 @@ internal fun DocumentsScreen(
                         deltaY = change.position.y - down.position.y
                         if (!change.pressed) {
                             val threshold = maxOf(viewConfiguration.touchSlop * 1.8f, 48.dp.toPx())
-                            if (!multiTouch && selectedUris.isEmpty() && selectedFolderPath == null &&
+                            if (false && !multiTouch && selectedUris.isEmpty() && selectedFolderPath == null &&
                                 kotlin.math.abs(deltaX) >= threshold &&
                                 kotlin.math.abs(deltaX) > kotlin.math.abs(deltaY) * 1.4f &&
                                 currentFolder.isBlank() && hasAccess
@@ -500,7 +500,7 @@ internal fun DocumentsScreen(
                     viewMode == "folders" -> "${childFolders.size} folders"
                     else -> "${allFiles.size} documents"
                 },
-                onOpenMenu = onOpenMenu
+                onOpenSettings = { }
             )
         }
 
@@ -650,8 +650,7 @@ internal fun DocumentsScreen(
                                                             if (document.uri in currentSelection) currentSelection - document.uri
                                                             else currentSelection + document.uri
                                                         } else {
-                                                            openedDocument = document
-                                                            emptySet()
+                                                            setOf(document.uri)
                                                         }
                                                     }
                                                 }

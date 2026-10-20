@@ -174,16 +174,12 @@ private fun simpleFadeTransition() =
 internal fun GalleryHeader(
     title: String,
     subtitle: String,
-    onOpenMenu: () -> Unit
+    onOpenSettings: () -> Unit
 ) {
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        IconButton(onClick = onOpenMenu) {
-            Icon(Icons.Default.Menu, "Open menu", tint = Color.White, modifier = Modifier.size(27.dp))
-        }
-        Spacer(Modifier.width(4.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 title,
@@ -194,6 +190,14 @@ internal fun GalleryHeader(
                 overflow = TextOverflow.Ellipsis
             )
             Text(subtitle, color = Color.LightGray, fontSize = 12.sp)
+        }
+        IconButton(onClick = onOpenSettings) {
+            Icon(
+                Icons.Default.Settings,
+                contentDescription = "Open settings",
+                tint = Color.White,
+                modifier = Modifier.size(25.dp)
+            )
         }
     }
 }
@@ -239,8 +243,11 @@ private fun GalleryApp() {
     var rememberLastPlayed by remember(context) {
         mutableStateOf(settingsPrefs.getBoolean("remember_last_played", false))
     }
-    var tab by remember { mutableStateOf("Reel") }
-    var menuScope by remember { mutableStateOf("All") }
+    var backgroundPlay by remember(context) {
+        mutableStateOf(settingsPrefs.getBoolean("background_play", false))
+    }
+    var tab by remember { mutableStateOf("Folders") }
+    var menuScope by remember { mutableStateOf("Folder") }
     var menuContent by remember { mutableStateOf("Media") }
     var documentFolderMode by remember { mutableStateOf(false) }
     var documentViewerOpen by remember { mutableStateOf(false) }
@@ -629,16 +636,17 @@ private fun GalleryApp() {
             media = loadedMedia
         }
     }
-    val visible = remember(media, selectedAlbum, hiddenFolders, tab, menuContent) {
+    // This build is intentionally video-only: folders list videos, and opening a folder shows only its videos.
+    val visible = remember(media, selectedAlbum, hiddenFolders) {
         (if (selectedAlbum == "All media") media else media.filter { it.album == selectedAlbum })
             .filter { it.album !in hiddenFolders }
-            .filter { item -> when { menuContent == "Audio" -> item.isAudio; tab == "Images" -> !item.isVideo && !item.isAudio; tab == "Videos" -> item.isVideo; else -> !item.isAudio } }
+            .filter { it.isVideo }
     }
 
-    LaunchedEffect(hasPermission, media, rememberLastPlayed) {
+    LaunchedEffect(hasPermission, media, rememberLastPlayed, tab) {
         if (hasPermission && media.isNotEmpty() && !resumeHandled) {
             resumeHandled = true
-            if (rememberLastPlayed) {
+            if (rememberLastPlayed && tab != "Folders") {
                 val lastUri = settingsPrefs.getString("last_media_uri", null)
                 if (lastUri != null && media.any { it.uri.toString() == lastUri }) {
                     viewerStartUri = Uri.parse(lastUri)
@@ -710,7 +718,7 @@ private fun GalleryApp() {
     val hasInnerScreen = viewerStartUri != null || mainMenuOpen || actionMenu || manageMediaInfoOpen || albumMenu ||
         infoItem != null || renameItem != null || renameMultipleItems.isNotEmpty() || statusMessage != null || transferMode != null ||
         selected.isNotEmpty() || selectedFolder != null || settingsPage != null || folderRemoveTarget != null ||
-        (tab == "Folders" && selectedAlbum != "All media") || tab != "Reel" || menuContent != "Media"
+        (tab == "Folders" && selectedAlbum != "All media")
     BackHandler(enabled = hasInnerScreen) {
         when {
             mainMenuOpen -> mainMenuOpen = false
@@ -734,22 +742,7 @@ private fun GalleryApp() {
             selected.isNotEmpty() -> selected = emptySet()
             selectedFolder != null -> selectedFolder = null
             tab == "Folders" && selectedAlbum != "All media" -> selectedAlbum = "All media"
-            menuContent != "Media" && tab == "Reel" -> {
-                menuContent = "Media"
-                menuScope = "All"
-                selectedAlbum = "All media"
-                selected = emptySet()
-            }
-            tab != "Reel" -> {
-                val returnToFolders = tab == "Documents" && menuScope == "Folder"
-                tab = if (returnToFolders) "Folders" else "Reel"
-                if (!returnToFolders) menuScope = "All"
-                menuContent = "Media"
-                documentFolderMode = false
-                selectedAlbum = "All media"
-                selectedFolder = null
-                selected = emptySet()
-            }
+            // The video-folder root is the app's home screen.
         }
     }
 
@@ -767,6 +760,11 @@ private fun GalleryApp() {
                 hiddenFolders = hiddenFolders,
                 autoPlayNext = autoPlayNext,
                 rememberLastPlayed = rememberLastPlayed,
+                backgroundPlay = backgroundPlay,
+                onToggleBackgroundPlay = { enabled ->
+                    backgroundPlay = enabled
+                    settingsPrefs.edit().putBoolean("background_play", enabled).apply()
+                },
                 onToggleAutoPlayNext = { enabled ->
                     autoPlayNext = enabled
                     settingsPrefs.edit().putBoolean("auto_play_next", enabled).apply()
@@ -828,31 +826,8 @@ private fun GalleryApp() {
                 onRequestAccess = ::requestDocumentsAccess,
                 initialViewMode = if (documentFolderMode) "folders" else "all",
                 onDocumentOpenChanged = { documentViewerOpen = it },
-                onOpenMenu = { mainMenuOpen = true },
-                onSwipeModeChange = { swipeLeft ->
-                    // Keep the same four-mode cycle available from Doc screens too.
-                    val currentIndex = when {
-                        menuContent == "Media" && menuScope == "Folder" -> 0
-                        menuContent == "Media" && menuScope == "All" -> 1
-                        menuContent == "Doc" && menuScope == "Folder" -> 2
-                        else -> 3
-                    }
-                    val nextIndex = if (swipeLeft) (currentIndex + 1) % 4 else (currentIndex + 3) % 4
-                    menuContent = if (nextIndex < 2) "Media" else "Doc"
-                    menuScope = if (nextIndex == 0 || nextIndex == 2) "Folder" else "All"
-                    documentFolderMode = menuContent == "Doc" && menuScope == "Folder"
-                    tab = when {
-                        menuContent == "Doc" -> "Documents"
-                        menuScope == "Folder" -> "Folders"
-                        else -> "Reel"
-                    }
-                    selectedAlbum = "All media"
-                    selected = emptySet()
-                    selectedFolder = null
-                    viewerStartUri = null
-                    viewerDisplayUri = null
-                    viewerCurrentUri = null
-                },
+                onOpenMenu = { /* Folder-only mode has no mode-switching menu. */ },
+                onSwipeModeChange = { _ -> },
                 mediaGridColumns = mediaGridColumns,
                 folderGridColumns = folderGridColumns,
                 mediaGridState = mediaGridState,
@@ -861,9 +836,10 @@ private fun GalleryApp() {
                 onFolderGridColumnsChange = { folderGridColumns = it },
                 onBack = {
                     documentViewerOpen = false
-                    tab = if (menuScope == "Folder") "Folders" else "Reel"
-                    menuContent = "Media"
-                    documentFolderMode = false
+                    tab = "Documents"
+                    menuContent = "Doc"
+                    menuScope = "Folder"
+                    documentFolderMode = true
                     selectedAlbum = "All media"
                     selectedFolder = null
                     selected = emptySet()
@@ -913,49 +889,7 @@ private fun GalleryApp() {
                 }
             }
         } else {
-            Column(Modifier.fillMaxSize().background(Color(0xFF101010)).statusBarsPadding().pointerInput(tab, menuScope, menuContent, documentFolderMode, documentViewerOpen, selected, selectedFolder, transferMode, mainMenuOpen) {
-                var totalHorizontalDrag = 0f
-                detectHorizontalDragGestures(
-                    onDragStart = { totalHorizontalDrag = 0f },
-                    onHorizontalDrag = { change, dragAmount ->
-                        totalHorizontalDrag += dragAmount
-                        change.consume()
-                    },
-                    onDragCancel = { totalHorizontalDrag = 0f },
-                    onDragEnd = {
-                        val threshold = maxOf(viewConfiguration.touchSlop * 2.5f, 96.dp.toPx())
-                        val canSwitchMode = selected.isEmpty() && selectedFolder == null &&
-                            transferMode == null && !mainMenuOpen && !documentViewerOpen
-                        if (canSwitchMode && kotlin.math.abs(totalHorizontalDrag) >= threshold) {
-                            // One deliberate horizontal swipe advances exactly one mode.
-                            val currentIndex = when {
-                                menuContent == "Media" && menuScope == "Folder" -> 0
-                                menuContent == "Media" && menuScope == "All" -> 1
-                                menuContent == "Doc" && menuScope == "Folder" -> 2
-                                else -> 3
-                            }
-                            val nextIndex = if (totalHorizontalDrag < 0f) (currentIndex + 1) % 4 else (currentIndex + 3) % 4
-                            menuContent = if (nextIndex < 2) "Media" else "Doc"
-                            menuScope = if (nextIndex == 0 || nextIndex == 2) "Folder" else "All"
-                            documentFolderMode = menuContent == "Doc" && menuScope == "Folder"
-                            tab = when {
-                                menuContent == "Doc" -> "Documents"
-                                menuScope == "Folder" -> "Folders"
-                                else -> "Reel"
-                            }
-                            selectedAlbum = "All media"
-                            selected = emptySet()
-                            selectedFolder = null
-                            if (tab == "Documents") {
-                                viewerStartUri = null
-                                viewerDisplayUri = null
-                                viewerCurrentUri = null
-                            }
-                        }
-                        totalHorizontalDrag = 0f
-                    }
-                )
-            }) {
+            Column(Modifier.fillMaxSize().background(Color(0xFF101010)).statusBarsPadding()) {
                 AnimatedContent(
                     targetState = when {
                         selected.isNotEmpty() -> "media" to null
@@ -992,23 +926,21 @@ private fun GalleryApp() {
                                 }
                                 Column(Modifier.weight(1f)) {
                                     Text(folderName, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text("Folder selected • ${media.count { it.album == folderName }} items", color = Color.LightGray, fontSize = 12.sp)
+                                    Text("Folder selected • ${media.count { it.album == folderName && it.isVideo }} videos", color = Color.LightGray, fontSize = 12.sp)
                                 }
                             }
                         }
                         else -> {
+                            val isInsideVideoFolder = tab == "Folders" && selectedAlbum != "All media"
+                            val headerVideoCount = if (isInsideVideoFolder) {
+                                media.count { it.isVideo && it.album == selectedAlbum }
+                            } else {
+                                media.count { it.isVideo }
+                            }
                             GalleryHeader(
-                                title = when {
-                                    transferMode != null -> "Choose destination"
-                                    tab == "Folders" && selectedAlbum != "All media" -> selectedAlbum
-                                    tab == "Folders" -> "Folder"
-                                    tab == "Images" -> "Images"
-                                    tab == "Videos" -> "Videos"
-                                    menuContent == "Audio" -> "Audio"
-                                    else -> "All"
-                                },
-                                subtitle = if (transferMode != null) "${transferMode} to a folder" else "${visible.size} items",
-                                onOpenMenu = { mainMenuOpen = true }
+                                title = if (isInsideVideoFolder) selectedAlbum else "ViDO",
+                                subtitle = "$headerVideoCount videos",
+                                onOpenSettings = { settingsPage = "main" }
                             )
                         }
                     }
@@ -1025,7 +957,7 @@ private fun GalleryApp() {
                     val animatedVisible = remember(media, hiddenFolders, gridAlbum, gridTab, menuContent) {
                         (if (gridAlbum == "All media") media else media.filter { it.album == gridAlbum })
                             .filter { it.album !in hiddenFolders }
-                            .filter { item -> when { menuContent == "Audio" -> item.isAudio; gridTab == "Images" -> !item.isVideo && !item.isAudio; gridTab == "Videos" -> item.isVideo; else -> !item.isAudio } }
+                            .filter { it.isVideo }
                     }
                     when {
                     !hasPermission -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1035,11 +967,11 @@ private fun GalleryApp() {
                             Button(onClick = ::requestPermissions) { Text("Allow gallery access") }
                         }
                     }
-                    animatedVisible.isEmpty() && !(gridTab == "Folders" && gridAlbum == "All media") -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No photos or videos found", color = Color.LightGray) }
+                    animatedVisible.isEmpty() && !(gridTab == "Folders" && gridAlbum == "All media") -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No videos found in this folder", color = Color.LightGray) }
                     gridTab == "Folders" && gridAlbum == "All media" -> {
-                        val folders = media.filter { it.album !in hiddenFolders && (if (menuContent == "Audio") it.isAudio else !it.isAudio) }.groupBy { it.album }.toSortedMap()
+                        val folders = media.filter { it.album !in hiddenFolders && it.isVideo }.groupBy { it.album }.toSortedMap()
                         if (folders.isEmpty()) {
-                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No folders found", color = Color.LightGray) }
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No video folders found", color = Color.LightGray) }
                         } else {
                             PullToRefreshBox(
                                 isRefreshing = isRefreshing,
@@ -1322,17 +1254,17 @@ private fun GalleryApp() {
             folderRemoveTarget?.let { folderName ->
                 AlertDialog(
                     onDismissRequest = { folderRemoveTarget = null },
-                    title = { Text("Delete media in folder?") },
+                    title = { Text("Delete videos in folder?") },
                     text = {
-                        Text("Delete all photos and videos inside \"${folderName}\"? Only images and videos will be deleted. Other file types and the folder itself will be left untouched.")
+                        Text("Delete all videos inside \"${folderName}\"? Photos, documents, audio, and the folder itself will be left untouched.")
                     },
                     confirmButton = {
                         TextButton(onClick = {
-                            val folderMedia = media.filter { it.album == folderName }
+                            val folderMedia = media.filter { it.album == folderName && it.isVideo }
                             folderRemoveTarget = null
                             selectedFolder = null
                             if (folderMedia.isNotEmpty()) deleteMedia(folderMedia)
-                        }) { Text("Delete photos & videos", color = Color(0xFFFF6680)) }
+                        }) { Text("Delete videos", color = Color(0xFFFF6680)) }
                     },
                     dismissButton = { TextButton(onClick = { folderRemoveTarget = null }) { Text("Cancel") } }
                 )
@@ -1344,7 +1276,7 @@ private fun GalleryApp() {
                     text = {
                         Column {
                             Text("Name: $folderName")
-                            Text("Items: ${media.count { it.album == folderName }}")
+                            Text("Videos: ${media.count { it.album == folderName && it.isVideo }}")
                             Text("Visibility: ${if (folderName in hiddenFolders) "Hidden" else "Visible"}")
                             Text("Files remain on your device; hiding only removes this folder from instaGallery.")
                         }
@@ -1549,6 +1481,8 @@ private fun SettingsScreen(
     hiddenFolders: Set<String>,
     autoPlayNext: Boolean,
     rememberLastPlayed: Boolean,
+    backgroundPlay: Boolean,
+    onToggleBackgroundPlay: (Boolean) -> Unit,
     onToggleAutoPlayNext: (Boolean) -> Unit,
     onToggleRememberLastPlayed: (Boolean) -> Unit,
     onBack: () -> Unit,
@@ -1621,6 +1555,16 @@ private fun SettingsScreen(
                     }
                 }
                 Spacer(Modifier.height(18.dp))
+                PlaybackSettingRow(
+                    title = "Background play",
+                    subtitle = if (backgroundPlay) {
+                        "On: keep video audio playing when you leave the app"
+                    } else {
+                        "Off: pause playback when the app goes into the background"
+                    },
+                    checked = backgroundPlay,
+                    onCheckedChange = onToggleBackgroundPlay
+                )
                 PlaybackSettingRow(
                     title = "Auto-play next / Loop current",
                     subtitle = if (autoPlayNext) {
@@ -2098,7 +2042,8 @@ private fun ReelsViewer(
                             scope.launch {
                                 val current = pagerState.currentPage
                                 if (!pagerState.isScrollInProgress && !currentMediaZoomed) {
-                                    pagerState.animateScrollToPage(if (current < items.lastIndex) current + 1 else 0)
+                                    // Avoid frame-dependent animation: autoplay must advance even while backgrounded.
+                                    pagerState.scrollToPage(if (current < items.lastIndex) current + 1 else 0)
                                 }
                             }
                         }
@@ -2340,7 +2285,12 @@ private fun VideoPage(
 
     DisposableEffect(player, lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_PAUSE) player.pause()
+            if (event == Lifecycle.Event.ON_PAUSE) {
+                val keepPlayingInBackground = context.getSharedPreferences(
+                    "instagallery_settings", Context.MODE_PRIVATE
+                ).getBoolean("background_play", false)
+                if (!keepPlayingInBackground) player.pause()
+            }
             if (event == Lifecycle.Event.ON_RESUME && active) player.playWhenReady = true
         }
         lifecycleOwner.lifecycle.addObserver(observer)
