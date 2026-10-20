@@ -239,10 +239,10 @@ private fun GalleryApp() {
     var rememberLastPlayed by remember(context) {
         mutableStateOf(settingsPrefs.getBoolean("remember_last_played", false))
     }
-    var tab by remember { mutableStateOf("Reel") }
-    var menuScope by remember { mutableStateOf("All") }
-    var menuContent by remember { mutableStateOf("Media") }
-    var documentFolderMode by remember { mutableStateOf(false) }
+    var tab by remember { mutableStateOf("Documents") }
+    var menuScope by remember { mutableStateOf("Folder") }
+    var menuContent by remember { mutableStateOf("Doc") }
+    var documentFolderMode by remember { mutableStateOf(true) }
     var documentViewerOpen by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf(setOf<Uri>()) }
     var selectedFolder by remember { mutableStateOf<String?>(null) }
@@ -828,9 +828,9 @@ private fun GalleryApp() {
                 onRequestAccess = ::requestDocumentsAccess,
                 initialViewMode = if (documentFolderMode) "folders" else "all",
                 onDocumentOpenChanged = { documentViewerOpen = it },
-                onOpenMenu = { mainMenuOpen = true },
-                onSwipeModeChange = { swipeLeft ->
-                    // Keep the same four-mode cycle available from Doc screens too.
+                onOpenMenu = { /* Folder-only mode has no mode-switching menu. */ },
+                onSwipeModeChange = { _ -> /* Folder-only mode disables mode-switching swipes. */
+                    // Folder browsing remains the only main view.
                     val currentIndex = when {
                         menuContent == "Media" && menuScope == "Folder" -> 0
                         menuContent == "Media" && menuScope == "All" -> 1
@@ -861,9 +861,10 @@ private fun GalleryApp() {
                 onFolderGridColumnsChange = { folderGridColumns = it },
                 onBack = {
                     documentViewerOpen = false
-                    tab = if (menuScope == "Folder") "Folders" else "Reel"
-                    menuContent = "Media"
-                    documentFolderMode = false
+                    tab = "Documents"
+                    menuContent = "Doc"
+                    menuScope = "Folder"
+                    documentFolderMode = true
                     selectedAlbum = "All media"
                     selectedFolder = null
                     selected = emptySet()
