@@ -828,30 +828,7 @@ private fun GalleryApp() {
                 initialViewMode = if (documentFolderMode) "folders" else "all",
                 onDocumentOpenChanged = { documentViewerOpen = it },
                 onOpenMenu = { /* Folder-only mode has no mode-switching menu. */ },
-                onSwipeModeChange = { _ -> /* Folder-only mode disables mode-switching swipes. */
-                    // Folder browsing remains the only main view.
-                    val currentIndex = when {
-                        menuContent == "Media" && menuScope == "Folder" -> 0
-                        menuContent == "Media" && menuScope == "All" -> 1
-                        menuContent == "Doc" && menuScope == "Folder" -> 2
-                        else -> 3
-                    }
-                    val nextIndex = if (swipeLeft) (currentIndex + 1) % 4 else (currentIndex + 3) % 4
-                    menuContent = if (nextIndex < 2) "Media" else "Doc"
-                    menuScope = if (nextIndex == 0 || nextIndex == 2) "Folder" else "All"
-                    documentFolderMode = menuContent == "Doc" && menuScope == "Folder"
-                    tab = when {
-                        menuContent == "Doc" -> "Documents"
-                        menuScope == "Folder" -> "Folders"
-                        else -> "Reel"
-                    }
-                    selectedAlbum = "All media"
-                    selected = emptySet()
-                    selectedFolder = null
-                    viewerStartUri = null
-                    viewerDisplayUri = null
-                    viewerCurrentUri = null
-                },
+                onSwipeModeChange = { _ -> },
                 mediaGridColumns = mediaGridColumns,
                 folderGridColumns = folderGridColumns,
                 mediaGridState = mediaGridState,
